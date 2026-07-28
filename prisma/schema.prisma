@@ -1,0 +1,237 @@
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ============================================================
+// ENUMS
+// ============================================================
+
+enum Role {
+  DOCTOR
+  RECEPTIONIST
+}
+
+enum Gender {
+  MALE
+  FEMALE
+  OTHER
+}
+
+enum AppointmentStatus {
+  SCHEDULED
+  COMPLETED
+  CANCELLED
+}
+
+enum QueueStatus {
+  WAITING
+  IN_PROGRESS
+  SERVED
+  CANCELLED
+}
+
+// ============================================================
+// CLINIC — SaaS tenant root
+// ============================================================
+
+model Clinic {
+  id        String   @id @default(uuid())
+  name      String
+  phone     String?
+  email     String?
+  address   String?
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  settings     ClinicSettings?
+  users        User[]
+  patients     Patient[]
+  appointments Appointment[]
+  visits       Visit[]
+  queueEntries QueueEntry[]
+
+  @@map("clinics")
+}
+
+// ============================================================
+// CLINIC SETTINGS — one-to-one configuration record
+// ============================================================
+
+model ClinicSettings {
+  id                String   @id @default(uuid())
+  clinicId          String   @unique
+  workingHours      Json     @default("{}")
+  maxPatientsPerDay Int      @default(50)
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  clinic Clinic @relation(fields: [clinicId], references: [id], onDelete: Cascade)
+
+  @@map("clinic_settings")
+}
+
+// ============================================================
+// USER — staff accounts (doctor, receptionist)
+// ============================================================
+
+model User {
+  id           String    @id @default(uuid())
+  clinicId     String
+  email        String
+  passwordHash String
+  fullName     String
+  role         Role      @default(RECEPTIONIST)
+  isActive     Boolean   @default(true)
+  lastLogin    DateTime?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  clinic Clinic @relation(fields: [clinicId], references: [id], onDelete: Cascade)
+
+  patientsCreated     Patient[]     @relation("PatientCreatedBy")
+  patientsUpdated     Patient[]     @relation("PatientUpdatedBy")
+  appointmentsCreated Appointment[] @relation("AppointmentCreatedBy")
+  appointmentsUpdated Appointment[] @relation("AppointmentUpdatedBy")
+  visitsCreated       Visit[]       @relation("VisitCreatedBy")
+  visitsUpdated       Visit[]       @relation("VisitUpdatedBy")
+  queueEntriesCreated QueueEntry[]  @relation("QueueEntryCreatedBy")
+  queueEntriesUpdated QueueEntry[]  @relation("QueueEntryUpdatedBy")
+
+  @@unique([clinicId, email])
+  @@index([clinicId])
+  @@map("users")
+}
+
+// ============================================================
+// PATIENT — permanent identity record, soft-deletable
+// ============================================================
+
+model Patient {
+  id          String    @id @default(uuid())
+  clinicId    String
+  createdById String?
+  updatedById String?
+  mrn         String
+  fullName    String
+  phone       String
+  dateOfBirth DateTime  @db.Date
+  gender      Gender
+  address     String?
+  notes       String?
+  deletedAt   DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  clinic       Clinic        @relation(fields: [clinicId], references: [id], onDelete: Cascade)
+  createdBy    User?         @relation("PatientCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+  updatedBy    User?         @relation("PatientUpdatedBy", fields: [updatedById], references: [id], onDelete: SetNull)
+  appointments Appointment[]
+  visits       Visit[]
+
+  @@unique([clinicId, mrn])
+  @@unique([clinicId, phone])
+  @@index([clinicId, deletedAt])
+  @@index([clinicId, fullName])
+  @@map("patients")
+}
+
+// ============================================================
+// APPOINTMENT — scheduled booking
+// ============================================================
+
+model Appointment {
+  id              String            @id @default(uuid())
+  clinicId        String
+  patientId       String
+  createdById     String?
+  updatedById     String?
+  visitId         String?           @unique
+  appointmentDate DateTime          @db.Date
+  appointmentTime DateTime          @db.Time
+  status          AppointmentStatus @default(SCHEDULED)
+  notes           String?
+  createdAt       DateTime          @default(now())
+  updatedAt       DateTime          @updatedAt
+
+  clinic    Clinic   @relation(fields: [clinicId], references: [id], onDelete: Cascade)
+  patient   Patient  @relation(fields: [patientId], references: [id], onDelete: Restrict)
+  createdBy User?    @relation("AppointmentCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+  updatedBy User?    @relation("AppointmentUpdatedBy", fields: [updatedById], references: [id], onDelete: SetNull)
+  visit     Visit?   @relation(fields: [visitId], references: [id], onDelete: SetNull)
+
+  @@unique([clinicId, appointmentDate, appointmentTime])
+  @@index([clinicId, appointmentDate])
+  @@index([patientId, appointmentDate])
+  @@index([clinicId, status])
+  @@map("appointments")
+}
+
+// ============================================================
+// VISIT — one clinic attendance; the medical record hub
+// ============================================================
+
+model Visit {
+  id             String   @id @default(uuid())
+  clinicId       String
+  patientId      String
+  createdById    String?
+  updatedById    String?
+  visitDate      DateTime @db.Date
+  chiefComplaint String?
+  diagnosis      String?
+  treatment      String?
+  prescription   String?
+  notes          String?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  clinic      Clinic       @relation(fields: [clinicId], references: [id], onDelete: Cascade)
+  patient     Patient      @relation(fields: [patientId], references: [id], onDelete: Restrict)
+  createdBy   User?        @relation("VisitCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+  updatedBy   User?        @relation("VisitUpdatedBy", fields: [updatedById], references: [id], onDelete: SetNull)
+  appointment Appointment?
+  queueEntry  QueueEntry?
+
+  @@unique([patientId, visitDate])
+  @@index([clinicId, visitDate])
+  @@index([patientId])
+  @@map("visits")
+}
+
+// ============================================================
+// QUEUE ENTRY — one position in the daily queue
+// ============================================================
+
+model QueueEntry {
+  id          String      @id @default(uuid())
+  clinicId    String
+  visitId     String?     @unique
+  createdById String?
+  updatedById String?
+  queueDate   DateTime    @db.Date
+  queueNumber Int
+  isReserved  Boolean     @default(false)
+  reservedFor String?
+  status      QueueStatus @default(WAITING)
+  calledAt    DateTime?
+  servedAt    DateTime?
+  createdAt   DateTime    @default(now())
+  updatedAt   DateTime    @updatedAt
+
+  clinic    Clinic  @relation(fields: [clinicId], references: [id], onDelete: Cascade)
+  visit     Visit?  @relation(fields: [visitId], references: [id], onDelete: SetNull)
+  createdBy User?   @relation("QueueEntryCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+  updatedBy User?   @relation("QueueEntryUpdatedBy", fields: [updatedById], references: [id], onDelete: SetNull)
+
+  @@unique([clinicId, queueDate, queueNumber])
+  @@index([clinicId, queueDate, status])
+  @@index([clinicId, queueDate])
+  @@map("queue_entries")
+}
