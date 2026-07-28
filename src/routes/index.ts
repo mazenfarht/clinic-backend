@@ -1,13 +1,14 @@
 // src/routes/index.ts
 
-import { Router, Request, Response } from "express";
+import { Router } from "express";
+import type { Request, Response } from "express";
 import { ApiResponse } from "../shared/utils/apiResponse";
+import authRoutes from "../modules/auth/auth.routes";
 
 const router = Router();
 
 // ---------------------------------------------------------------------------
-// Health check — used by Docker, load balancers, and uptime monitors to
-// verify the service is running and the process is healthy.
+// Health check
 // ---------------------------------------------------------------------------
 
 router.get("/health", (_req: Request, res: Response) => {
@@ -24,14 +25,9 @@ router.get("/health", (_req: Request, res: Response) => {
 });
 
 // ---------------------------------------------------------------------------
-// Module routers will be mounted here as features are built.
-//
-// Example:
-// import authRoutes from '../modules/auth/auth.routes';
-// import patientRoutes from '../modules/patients/patient.routes';
-//
-// router.use('/auth', authRoutes);
-// router.use('/patients', patientRoutes);
+// Module routers
 // ---------------------------------------------------------------------------
+
+router.use("/auth", authRoutes);
 
 export default router;
