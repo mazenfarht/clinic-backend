@@ -7,6 +7,8 @@ import authRoutes from "../modules/auth/auth.routes";
 import patientRoutes from "../modules/patients";
 import appointmentRoutes from "../modules/appointments";
 import { queueRoutes } from "../modules/queue";
+import { patientVisitRouter, visitRoutes } from "../modules/visits";
+import { dashboardRoutes } from "../modules/dashboard";
 
 const router = Router();
 
@@ -35,5 +37,8 @@ router.use("/auth", authRoutes);
 router.use("/patients", patientRoutes);
 router.use("/appointments", appointmentRoutes);
 router.use("/queue", queueRoutes);
+router.use("/visits", visitRoutes);
+router.use("/patients/:patientId/visits", patientVisitRouter);
+router.use("/dashboard", dashboardRoutes);
 
 export default router;
