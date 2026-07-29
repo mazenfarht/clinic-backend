@@ -5,7 +5,7 @@ import { Prisma } from "@prisma/client";
 import { AppError, HttpStatus } from "../shared/errors/AppError";
 import { ApiResponse } from "../shared/utils/apiResponse";
 import config from "../config";
-
+import { ZodError } from "zod";
 // ---------------------------------------------------------------------------
 // Prisma error mapping
 // ---------------------------------------------------------------------------
@@ -147,6 +147,19 @@ function normaliseError(err: unknown): AppError {
     return new AppError(
       "Malformed JSON in request body.",
       HttpStatus.BAD_REQUEST
+    );
+  }
+
+  // Zod validation errors
+  if (err instanceof ZodError) {
+    return new AppError(
+      "Validation failed.",
+      HttpStatus.BAD_REQUEST,
+      true,
+      err.issues.map((issue) => ({
+        field: issue.path.join("."),
+        message: issue.message,
+      }))
     );
   }
 

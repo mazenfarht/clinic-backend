@@ -4,6 +4,9 @@ import { Router } from "express";
 import type { Request, Response } from "express";
 import { ApiResponse } from "../shared/utils/apiResponse";
 import authRoutes from "../modules/auth/auth.routes";
+import patientRoutes from "../modules/patients";
+import appointmentRoutes from "../modules/appointments";
+import { queueRoutes } from "../modules/queue";
 
 const router = Router();
 
@@ -29,5 +32,8 @@ router.get("/health", (_req: Request, res: Response) => {
 // ---------------------------------------------------------------------------
 
 router.use("/auth", authRoutes);
+router.use("/patients", patientRoutes);
+router.use("/appointments", appointmentRoutes);
+router.use("/queue", queueRoutes);
 
 export default router;
