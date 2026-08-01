@@ -9,6 +9,7 @@ import appointmentRoutes from "../modules/appointments";
 import { queueRoutes } from "../modules/queue";
 import { patientVisitRouter, visitRoutes } from "../modules/visits";
 import { dashboardRoutes } from "../modules/dashboard";
+import { clinicSettingsRoutes } from "../modules/clinic-settings";
 
 const router = Router();
 
@@ -40,5 +41,5 @@ router.use("/queue", queueRoutes);
 router.use("/visits", visitRoutes);
 router.use("/patients/:patientId/visits", patientVisitRouter);
 router.use("/dashboard", dashboardRoutes);
-
+router.use("/clinic-settings", clinicSettingsRoutes);
 export default router;
