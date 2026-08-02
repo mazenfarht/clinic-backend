@@ -10,6 +10,7 @@ import { queueRoutes } from "../modules/queue";
 import { patientVisitRouter, visitRoutes } from "../modules/visits";
 import { dashboardRoutes } from "../modules/dashboard";
 import { clinicSettingsRoutes } from "../modules/clinic-settings";
+import publicRoutes from "../modules/public";
 
 const router = Router();
 
@@ -42,4 +43,6 @@ router.use("/visits", visitRoutes);
 router.use("/patients/:patientId/visits", patientVisitRouter);
 router.use("/dashboard", dashboardRoutes);
 router.use("/clinic-settings", clinicSettingsRoutes);
+router.use("/public", publicRoutes);
+
 export default router;
