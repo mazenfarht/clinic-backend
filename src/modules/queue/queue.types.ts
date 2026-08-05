@@ -18,7 +18,9 @@ export interface QueueEntrySummary {
   isReserved: boolean;
   reservedFor: string | null;
   status: QueueStatus;
+  checkedInAt: Date | null;
   calledAt: Date | null;
+  startedAt: Date | null;
   servedAt: Date | null;
   createdAt: Date;
   updatedAt: Date;

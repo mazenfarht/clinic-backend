@@ -10,6 +10,7 @@ export interface VisitSummary {
   treatment: string | null;
   prescription: string | null;
   notes: string | null;
+  startedAt: Date | null;
   createdAt: Date;
   updatedAt: Date;
   patient: {

@@ -14,6 +14,9 @@ const clinicSettingsSelect = {
   clinicId: true,
   workingHours: true,
   maxPatientsPerDay: true,
+  appointmentDuration: true,
+  gracePeriod: true,
+  delayThreshold: true,
   createdAt: true,
   updatedAt: true,
   clinic: {
@@ -68,6 +71,9 @@ async function ensureSettingsExist(clinicId: string): Promise<{ id: string }> {
         sunday: { open: "09:00", close: "14:00", isOpen: false },
       },
       maxPatientsPerDay: 50,
+      appointmentDuration: 30,
+      gracePeriod: 15,
+      delayThreshold: 20,
     },
     select: { id: true },
   });
@@ -108,16 +114,30 @@ export async function updateClinicSettings(
   await findClinicOrThrow(clinicId);
   await ensureSettingsExist(clinicId);
 
-  const { name, phone, email, address, workingHours, maxPatientsPerDay } =
-    input;
+  const {
+    name,
+    phone,
+    email,
+    address,
+    workingHours,
+    maxPatientsPerDay,
+    appointmentDuration,
+    gracePeriod,
+    delayThreshold,
+  } = input;
 
   const hasClinicFields =
     name !== undefined ||
     phone !== undefined ||
     email !== undefined ||
     address !== undefined;
+
   const hasSettingsFields =
-    workingHours !== undefined || maxPatientsPerDay !== undefined;
+    workingHours !== undefined ||
+    maxPatientsPerDay !== undefined ||
+    appointmentDuration !== undefined ||
+    gracePeriod !== undefined ||
+    delayThreshold !== undefined;
 
   const settings = await prisma.$transaction(async (tx) => {
     if (hasClinicFields) {
@@ -138,6 +158,9 @@ export async function updateClinicSettings(
         data: {
           ...(workingHours !== undefined ? { workingHours } : {}),
           ...(maxPatientsPerDay !== undefined ? { maxPatientsPerDay } : {}),
+          ...(appointmentDuration !== undefined ? { appointmentDuration } : {}),
+          ...(gracePeriod !== undefined ? { gracePeriod } : {}),
+          ...(delayThreshold !== undefined ? { delayThreshold } : {}),
         },
       });
     }

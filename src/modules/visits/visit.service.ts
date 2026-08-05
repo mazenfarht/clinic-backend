@@ -1,19 +1,19 @@
 // src/modules/visits/visit.service.ts
 
-import prisma from '../../config/database';
+import prisma from "../../config/database";
 import {
   NotFoundError,
   ConflictError,
   BadRequestError,
-} from '../../shared/errors/AppError';
-import { ApiResponse } from '../../shared/utils/apiResponse';
+} from "../../shared/errors/AppError";
+import { ApiResponse } from "../../shared/utils/apiResponse";
 import type {
   VisitDetail,
   VisitFilters,
   VisitListResult,
   VisitSummary,
-} from './visit.types';
-import type { CreateVisitInput, UpdateVisitInput } from './visit.validation';
+} from "./visit.types";
+import type { CreateVisitInput, UpdateVisitInput } from "./visit.validation";
 
 // ---------------------------------------------------------------------------
 // Shared selects
@@ -29,6 +29,7 @@ const visitSummarySelect = {
   treatment: true,
   prescription: true,
   notes: true,
+  startedAt: true,
   createdAt: true,
   updatedAt: true,
   patient: {
@@ -82,7 +83,7 @@ const visitDetailSelect = {
 function buildDateRangeFilter(
   date?: string,
   fromDate?: string,
-  toDate?: string,
+  toDate?: string
 ): object {
   if (date) {
     const start = new Date(`${date}T00:00:00.000Z`);
@@ -102,7 +103,7 @@ function buildDateRangeFilter(
 
 async function assertPatientExists(
   patientId: string,
-  clinicId: string,
+  clinicId: string
 ): Promise<void> {
   const patient = await prisma.patient.findFirst({
     where: { id: patientId, clinicId, deletedAt: null },
@@ -110,14 +111,14 @@ async function assertPatientExists(
   });
 
   if (!patient) {
-    throw new NotFoundError('Patient not found or has been deleted');
+    throw new NotFoundError("Patient not found or has been deleted");
   }
 }
 
 async function assertAppointmentValid(
   appointmentId: string,
   patientId: string,
-  clinicId: string,
+  clinicId: string
 ): Promise<void> {
   const appointment = await prisma.appointment.findFirst({
     where: {
@@ -130,22 +131,22 @@ async function assertAppointmentValid(
 
   if (!appointment) {
     throw new NotFoundError(
-      'Appointment not found or does not belong to this patient',
+      "Appointment not found or does not belong to this patient"
     );
   }
 
-  if (appointment.status === 'CANCELLED') {
-    throw new BadRequestError('Cannot link a visit to a cancelled appointment');
+  if (appointment.status === "CANCELLED") {
+    throw new BadRequestError("Cannot link a visit to a cancelled appointment");
   }
 
   if (appointment.visitId) {
-    throw new ConflictError('Appointment already has a visit linked to it');
+    throw new ConflictError("Appointment already has a visit linked to it");
   }
 }
 
 async function assertQueueEntryValid(
   queueEntryId: string,
-  clinicId: string,
+  clinicId: string
 ): Promise<void> {
   const entry = await prisma.queueEntry.findFirst({
     where: { id: queueEntryId, clinicId },
@@ -153,17 +154,17 @@ async function assertQueueEntryValid(
   });
 
   if (!entry) {
-    throw new NotFoundError('Queue entry not found');
+    throw new NotFoundError("Queue entry not found");
   }
 
   if (entry.visitId) {
-    throw new ConflictError('Queue entry already has a visit linked to it');
+    throw new ConflictError("Queue entry already has a visit linked to it");
   }
 }
 
 async function findVisitOrThrow(
   id: string,
-  clinicId: string,
+  clinicId: string
 ): Promise<{ id: string }> {
   const visit = await prisma.visit.findFirst({
     where: { id, clinicId },
@@ -171,7 +172,7 @@ async function findVisitOrThrow(
   });
 
   if (!visit) {
-    throw new NotFoundError('Visit not found');
+    throw new NotFoundError("Visit not found");
   }
 
   return visit;
@@ -184,12 +185,16 @@ async function findVisitOrThrow(
 export async function createVisit(
   clinicId: string,
   createdById: string,
-  input: CreateVisitInput,
+  input: CreateVisitInput
 ): Promise<VisitDetail> {
   await assertPatientExists(input.patientId, clinicId);
 
   if (input.appointmentId) {
-    await assertAppointmentValid(input.appointmentId, input.patientId, clinicId);
+    await assertAppointmentValid(
+      input.appointmentId,
+      input.patientId,
+      clinicId
+    );
   }
 
   if (input.queueEntryId) {
@@ -206,7 +211,7 @@ export async function createVisit(
   });
 
   if (existingVisit) {
-    throw new ConflictError('Patient already has a visit record for this date');
+    throw new ConflictError("Patient already has a visit record for this date");
   }
 
   const visit = await prisma.$transaction(async (tx) => {
@@ -222,6 +227,7 @@ export async function createVisit(
         treatment: input.treatment ?? null,
         prescription: input.prescription ?? null,
         notes: input.notes ?? null,
+        // startedAt is null at creation — set later via startConsultation
       },
       select: visitDetailSelect,
     });
@@ -258,7 +264,7 @@ export async function createVisit(
 
 export async function getVisitById(
   id: string,
-  clinicId: string,
+  clinicId: string
 ): Promise<VisitDetail> {
   await findVisitOrThrow(id, clinicId);
 
@@ -267,7 +273,7 @@ export async function getVisitById(
     select: visitDetailSelect,
   });
 
-  if (!visit) throw new NotFoundError('Visit not found');
+  if (!visit) throw new NotFoundError("Visit not found");
 
   return visit as VisitDetail;
 }
@@ -278,7 +284,7 @@ export async function getVisitById(
 
 export async function listVisits(
   clinicId: string,
-  filters: VisitFilters,
+  filters: VisitFilters
 ): Promise<VisitListResult> {
   const {
     search,
@@ -287,8 +293,8 @@ export async function listVisits(
     date,
     fromDate,
     toDate,
-    sortBy = 'visitDate',
-    sortOrder = 'desc',
+    sortBy = "visitDate",
+    sortOrder = "desc",
     page = 1,
     limit = 10,
   } = filters;
@@ -305,9 +311,9 @@ export async function listVisits(
       ? {
           patient: {
             OR: [
-              { fullName: { contains: search, mode: 'insensitive' as const } },
-              { phone: { contains: search, mode: 'insensitive' as const } },
-              { mrn: { contains: search, mode: 'insensitive' as const } },
+              { fullName: { contains: search, mode: "insensitive" as const } },
+              { phone: { contains: search, mode: "insensitive" as const } },
+              { mrn: { contains: search, mode: "insensitive" as const } },
             ],
           },
         }
@@ -338,14 +344,14 @@ export async function listVisits(
 export async function listVisitsByPatient(
   patientId: string,
   clinicId: string,
-  filters: VisitFilters,
+  filters: VisitFilters
 ): Promise<VisitListResult> {
   const patient = await prisma.patient.findFirst({
     where: { id: patientId, clinicId },
     select: { id: true },
   });
 
-  if (!patient) throw new NotFoundError('Patient not found');
+  if (!patient) throw new NotFoundError("Patient not found");
 
   return listVisits(clinicId, { ...filters, patientId });
 }
@@ -358,7 +364,7 @@ export async function updateVisit(
   id: string,
   clinicId: string,
   updatedById: string,
-  input: UpdateVisitInput,
+  input: UpdateVisitInput
 ): Promise<VisitDetail> {
   await findVisitOrThrow(id, clinicId);
 
@@ -378,10 +384,7 @@ export async function updateVisit(
 // Delete visit
 // ---------------------------------------------------------------------------
 
-export async function deleteVisit(
-  id: string,
-  clinicId: string,
-): Promise<void> {
+export async function deleteVisit(id: string, clinicId: string): Promise<void> {
   await findVisitOrThrow(id, clinicId);
 
   await prisma.$transaction(async (tx) => {

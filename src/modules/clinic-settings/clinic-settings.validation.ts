@@ -61,6 +61,24 @@ export const updateClinicSettingsSchema = z
       .min(1, "Max patients per day must be at least 1")
       .max(1000, "Max patients per day must not exceed 1000")
       .optional(),
+    appointmentDuration: z
+      .number()
+      .int("Appointment duration must be an integer")
+      .min(5, "Appointment duration must be at least 5 minutes")
+      .max(480, "Appointment duration must not exceed 480 minutes")
+      .optional(),
+    gracePeriod: z
+      .number()
+      .int("Grace period must be an integer")
+      .min(1, "Grace period must be at least 1 minute")
+      .max(120, "Grace period must not exceed 120 minutes")
+      .optional(),
+    delayThreshold: z
+      .number()
+      .int("Delay threshold must be an integer")
+      .min(1, "Delay threshold must be at least 1 minute")
+      .max(240, "Delay threshold must not exceed 240 minutes")
+      .optional(),
   })
   .refine((data) => Object.keys(data).length > 0, {
     message: "At least one field must be provided for update",

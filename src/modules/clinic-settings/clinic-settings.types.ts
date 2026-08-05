@@ -21,6 +21,9 @@ export interface ClinicSettingsResponse {
   clinicId: string;
   workingHours: WorkingHours;
   maxPatientsPerDay: number;
+  appointmentDuration: number;
+  gracePeriod: number;
+  delayThreshold: number;
   createdAt: Date;
   updatedAt: Date;
   clinic: {
@@ -45,5 +48,8 @@ export interface UpdateClinicSettingsPayload {
   settings?: {
     workingHours?: WorkingHours;
     maxPatientsPerDay?: number;
+    appointmentDuration?: number;
+    gracePeriod?: number;
+    delayThreshold?: number;
   };
 }

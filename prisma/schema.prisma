@@ -7,10 +7,6 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
-// ============================================================
-// ENUMS
-// ============================================================
-
 enum Role {
   DOCTOR
   RECEPTIONIST
@@ -24,8 +20,10 @@ enum Gender {
 
 enum AppointmentStatus {
   SCHEDULED
+  CONFIRMED
   COMPLETED
   CANCELLED
+  NO_SHOW
 }
 
 enum QueueStatus {
@@ -34,10 +32,6 @@ enum QueueStatus {
   SERVED
   CANCELLED
 }
-
-// ============================================================
-// CLINIC — SaaS tenant root
-// ============================================================
 
 model Clinic {
   id        String   @id @default(uuid())
@@ -59,26 +53,21 @@ model Clinic {
   @@map("clinics")
 }
 
-// ============================================================
-// CLINIC SETTINGS — one-to-one configuration record
-// ============================================================
-
 model ClinicSettings {
-  id                String   @id @default(uuid())
-  clinicId          String   @unique
-  workingHours      Json     @default("{}")
-  maxPatientsPerDay Int      @default(50)
-  createdAt         DateTime @default(now())
-  updatedAt         DateTime @updatedAt
+  id                  String   @id @default(uuid())
+  clinicId            String   @unique
+  workingHours        Json     @default("{}")
+  maxPatientsPerDay   Int      @default(50)
+  appointmentDuration Int      @default(30)
+  gracePeriod         Int      @default(15)
+  delayThreshold      Int      @default(20)
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
 
   clinic Clinic @relation(fields: [clinicId], references: [id], onDelete: Cascade)
 
   @@map("clinic_settings")
 }
-
-// ============================================================
-// USER — staff accounts (doctor, receptionist)
-// ============================================================
 
 model User {
   id           String    @id @default(uuid())
@@ -107,10 +96,6 @@ model User {
   @@index([clinicId])
   @@map("users")
 }
-
-// ============================================================
-// PATIENT — permanent identity record, soft-deletable
-// ============================================================
 
 model Patient {
   id          String    @id @default(uuid())
@@ -141,10 +126,6 @@ model Patient {
   @@map("patients")
 }
 
-// ============================================================
-// APPOINTMENT — scheduled booking
-// ============================================================
-
 model Appointment {
   id              String            @id @default(uuid())
   clinicId        String
@@ -172,24 +153,23 @@ model Appointment {
   @@map("appointments")
 }
 
-// ============================================================
-// VISIT — one clinic attendance; the medical record hub
-// ============================================================
-
 model Visit {
-  id             String   @id @default(uuid())
+  id             String    @id @default(uuid())
   clinicId       String
   patientId      String
   createdById    String?
   updatedById    String?
-  visitDate      DateTime @db.Date
+  visitDate      DateTime  @db.Date
   chiefComplaint String?
   diagnosis      String?
   treatment      String?
   prescription   String?
   notes          String?
-  createdAt      DateTime @default(now())
-  updatedAt      DateTime @updatedAt
+  startedAt      DateTime?
+  completedAt    DateTime?
+  followUpDate   DateTime? @db.Date
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
 
   clinic      Clinic       @relation(fields: [clinicId], references: [id], onDelete: Cascade)
   patient     Patient      @relation(fields: [patientId], references: [id], onDelete: Restrict)
@@ -204,10 +184,6 @@ model Visit {
   @@map("visits")
 }
 
-// ============================================================
-// QUEUE ENTRY — one position in the daily queue
-// ============================================================
-
 model QueueEntry {
   id          String      @id @default(uuid())
   clinicId    String
@@ -219,7 +195,9 @@ model QueueEntry {
   isReserved  Boolean     @default(false)
   reservedFor String?
   status      QueueStatus @default(WAITING)
+  checkedInAt DateTime?
   calledAt    DateTime?
+  startedAt   DateTime?
   servedAt    DateTime?
   createdAt   DateTime    @default(now())
   updatedAt   DateTime    @updatedAt

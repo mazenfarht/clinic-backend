@@ -44,6 +44,10 @@ const DAY_KEYS = [
 
 type DayKey = (typeof DAY_KEYS)[number];
 
+function parseDateOnly(date: string): Date {
+  return new Date(`${date}T00:00:00.000Z`);
+}
+
 interface DaySchedule {
   open: string;
   close: string;
@@ -70,7 +74,7 @@ function resolveDaySchedule(
   workingHours: Record<DayKey, DaySchedule>,
   date: Date
 ): DaySchedule {
-  const dayKey = DAY_KEYS[date.getDay()];
+  const dayKey = DAY_KEYS[date.getUTCDay()];
   const schedule = workingHours[dayKey];
   if (!schedule || !schedule.isOpen) {
     throw new BadRequestError("The clinic is closed on the selected date");
@@ -124,18 +128,15 @@ export async function getAvailability(
 
   const today = new Date();
   today.setHours(0, 0, 0, 0);
-  const requestedDate = new Date(date);
-  requestedDate.setHours(0, 0, 0, 0);
+  const requestedDate = parseDateOnly(date);
 
   if (requestedDate < today) {
     throw new BadRequestError("Cannot check availability for a past date");
   }
 
-  const workingHours = (clinic.settings?.workingHours ?? {}) as Record<
-    DayKey,
-    DaySchedule
-  >;
-  const dayKey = DAY_KEYS[requestedDate.getDay()];
+  const workingHours = (clinic.settings?.workingHours ??
+    {}) as unknown as Record<DayKey, DaySchedule>;
+  const dayKey = DAY_KEYS[requestedDate.getUTCDay()];
   const daySchedule = workingHours[dayKey];
 
   if (!daySchedule || !daySchedule.isOpen) {
@@ -143,7 +144,7 @@ export async function getAvailability(
   }
 
   const allSlots = generateSlots(daySchedule.open, daySchedule.close);
-  const bookedTimes = await getBookedSlots(clinicId, new Date(date));
+  const bookedTimes = await getBookedSlots(clinicId, requestedDate);
   const availableSlots = allSlots.filter((slot) => !bookedTimes.has(slot));
 
   return { date, isOpen: true, availableSlots };
@@ -244,8 +245,7 @@ export async function bookAppointment(
   // 1. Validate date is not in the past
   const today = new Date();
   today.setHours(0, 0, 0, 0);
-  const appointmentDate = new Date(input.appointmentDate);
-  appointmentDate.setHours(0, 0, 0, 0);
+  const appointmentDate = parseDateOnly(input.appointmentDate);
 
   if (appointmentDate < today) {
     throw new BadRequestError("Appointment date cannot be in the past");
@@ -261,10 +261,8 @@ export async function bookAppointment(
   }
 
   // 3. Validate time slot is within clinic working hours
-  const workingHours = (clinic.settings?.workingHours ?? {}) as Record<
-    DayKey,
-    DaySchedule
-  >;
+  const workingHours = (clinic.settings?.workingHours ??
+    {}) as unknown as Record<DayKey, DaySchedule>;
   const daySchedule = resolveDaySchedule(workingHours, appointmentDate);
   const allSlots = generateSlots(daySchedule.open, daySchedule.close);
 
@@ -274,7 +272,22 @@ export async function bookAppointment(
     );
   }
 
-  // 4. Check slot is not already booked
+  // 4. Check if patient already has an appointment on this date
+  const existingPatientAppointment = await prisma.appointment.findFirst({
+    where: {
+      clinicId,
+      patientId: input.patientId,
+      appointmentDate,
+      status: "SCHEDULED",
+    },
+    select: { id: true },
+  });
+
+  if (existingPatientAppointment) {
+    throw new ConflictError("Patient already has an appointment on this date");
+  }
+
+  // 5. Check slot is not already booked
   const bookedTimes = await getBookedSlots(
     clinicId,
     new Date(input.appointmentDate)
@@ -285,7 +298,7 @@ export async function bookAppointment(
     );
   }
 
-  // 5. Create the appointment — the DB unique constraint is the final guard
+  // 6. Create the appointment — the DB unique constraint is the final guard
   const [h, m] = input.appointmentTime.split(":").map(Number);
   const appointmentTime = new Date(0);
   appointmentTime.setUTCHours(h, m, 0, 0);
@@ -294,7 +307,7 @@ export async function bookAppointment(
     data: {
       clinicId,
       patientId: input.patientId,
-      appointmentDate: new Date(input.appointmentDate),
+      appointmentDate,
       appointmentTime,
       notes: input.notes ?? null,
     },

@@ -10,28 +10,17 @@ const router = Router();
 router.use(authMiddleware);
 router.use(requireRoles("DOCTOR", "RECEPTIONIST"));
 
-// ---------------------------------------------------------------------------
-// Collection routes
-// ---------------------------------------------------------------------------
-
 router.get("/", QueueController.getQueue);
 router.get("/status", QueueController.getQueueStatus);
 router.get("/statistics", QueueController.getQueueStatistics);
-
-// ---------------------------------------------------------------------------
-// Action routes
-// ---------------------------------------------------------------------------
 
 router.post("/check-in", QueueController.checkIn);
 router.post("/reserve", QueueController.reserveSlot);
 router.post("/call-next", QueueController.callNext);
 router.post("/reset", QueueController.resetQueue);
 
-// ---------------------------------------------------------------------------
-// Member routes
-// ---------------------------------------------------------------------------
-
 router.get("/:id", QueueController.getQueueEntryById);
+router.patch("/:id/start", QueueController.startConsultation);
 router.patch("/:id/serve", QueueController.markServed);
 router.patch("/:id/skip", QueueController.skipPatient);
 router.patch("/:id/recall", QueueController.recallPatient);

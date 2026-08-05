@@ -16,10 +16,10 @@ import type {
   QueueStatus_Current,
 } from "./queue.types";
 import type { CheckInInput, ReserveSlotInput } from "./queue.validation";
-import type { QueueStatus } from "@prisma/client";
+import type { QueueStatus, Prisma } from "@prisma/client";
 
 // ---------------------------------------------------------------------------
-// Shared select
+// Shared select — includes ALL timestamp fields
 // ---------------------------------------------------------------------------
 
 const queueEntrySummarySelect = {
@@ -31,7 +31,9 @@ const queueEntrySummarySelect = {
   isReserved: true,
   reservedFor: true,
   status: true,
+  checkedInAt: true,
   calledAt: true,
+  startedAt: true,
   servedAt: true,
   createdAt: true,
   updatedAt: true,
@@ -96,10 +98,15 @@ function assertStatusTransition(
 async function findEntryOrThrow(
   id: string,
   clinicId: string
-): Promise<{ id: string; status: QueueStatus; visitId: string | null }> {
+): Promise<{
+  id: string;
+  status: QueueStatus;
+  visitId: string | null;
+  startedAt: Date | null;
+}> {
   const entry = await prisma.queueEntry.findFirst({
     where: { id, clinicId },
-    select: { id: true, status: true, visitId: true },
+    select: { id: true, status: true, visitId: true, startedAt: true },
   });
 
   if (!entry) {
@@ -110,10 +117,11 @@ async function findEntryOrThrow(
 }
 
 async function generateQueueNumber(
+  tx: Prisma.TransactionClient,
   clinicId: string,
   queueDate: Date
 ): Promise<number> {
-  const lastEntry = await prisma.queueEntry.findFirst({
+  const lastEntry = await tx.queueEntry.findFirst({
     where: { clinicId, queueDate },
     orderBy: { queueNumber: "desc" },
     select: { queueNumber: true },
@@ -121,28 +129,6 @@ async function generateQueueNumber(
 
   const lastNumber = lastEntry?.queueNumber ?? 0;
   return lastNumber + 1;
-}
-
-async function assertNoActiveQueueEntry(
-  clinicId: string,
-  patientId: string,
-  queueDate: Date
-): Promise<void> {
-  const existing = await prisma.queueEntry.findFirst({
-    where: {
-      clinicId,
-      queueDate,
-      status: { in: ["WAITING", "IN_PROGRESS"] },
-      visit: { patientId },
-    },
-    select: { id: true },
-  });
-
-  if (existing) {
-    throw new ConflictError(
-      "Patient already has an active queue entry for today"
-    );
-  }
 }
 
 // ---------------------------------------------------------------------------
@@ -164,8 +150,6 @@ export async function checkIn(
   if (!patient) {
     throw new NotFoundError("Patient not found or has been deleted");
   }
-
-  await assertNoActiveQueueEntry(clinicId, input.patientId, queueDate);
 
   if (input.appointmentId) {
     const appointment = await prisma.appointment.findFirst({
@@ -189,54 +173,84 @@ export async function checkIn(
     }
   }
 
-  const entry = await prisma.$transaction(async (tx) => {
-    const visit = await tx.visit.create({
-      data: {
-        clinicId,
-        patientId: input.patientId,
-        createdById,
-        updatedById: createdById,
-        visitDate: queueDate,
-        chiefComplaint: input.chiefComplaint ?? null,
-        notes: input.notes ?? null,
-      },
-      select: { id: true },
-    });
-
-    if (input.appointmentId) {
-      await tx.appointment.update({
-        where: { id: input.appointmentId },
-        data: {
-          visitId: visit.id,
-          updatedById: createdById,
+  try {
+    const entry = await prisma.$transaction(async (tx) => {
+      const existingEntry = await tx.queueEntry.findFirst({
+        where: {
+          clinicId,
+          queueDate,
+          status: { in: ["WAITING", "IN_PROGRESS"] },
+          visit: { patientId: input.patientId },
         },
+        select: { id: true },
       });
-    }
 
-    const queueNumber = await generateQueueNumber(clinicId, queueDate);
+      if (existingEntry) {
+        throw new ConflictError(
+          "Patient already has an active queue entry for today"
+        );
+      }
 
-    const queueEntry = await tx.queueEntry.create({
-      data: {
-        clinicId,
-        visitId: visit.id,
-        createdById,
-        updatedById: createdById,
-        queueDate,
-        queueNumber,
-        isReserved: false,
-        status: "WAITING",
-      },
-      select: queueEntrySummarySelect,
+      const visit = await tx.visit.create({
+        data: {
+          clinicId,
+          patientId: input.patientId,
+          createdById,
+          updatedById: createdById,
+          visitDate: queueDate,
+          chiefComplaint: input.chiefComplaint ?? null,
+          notes: input.notes ?? null,
+        },
+        select: { id: true },
+      });
+
+      if (input.appointmentId) {
+        await tx.appointment.update({
+          where: { id: input.appointmentId },
+          data: {
+            visitId: visit.id,
+            updatedById: createdById,
+          },
+        });
+      }
+
+      const queueNumber = await generateQueueNumber(tx, clinicId, queueDate);
+
+      const queueEntry = await tx.queueEntry.create({
+        data: {
+          clinicId,
+          visitId: visit.id,
+          createdById,
+          updatedById: createdById,
+          queueDate,
+          queueNumber,
+          isReserved: false,
+          status: "WAITING",
+          checkedInAt: new Date(),
+        },
+        select: queueEntrySummarySelect,
+      });
+
+      return queueEntry;
     });
 
-    return queueEntry;
-  });
-
-  return entry as QueueEntrySummary;
+    return entry as QueueEntrySummary;
+  } catch (err: unknown) {
+    if (
+      err instanceof Error &&
+      "code" in err &&
+      (err as { code: string }).code === "P2002"
+    ) {
+      throw new ConflictError(
+        "Patient already has an active queue entry for today"
+      );
+    }
+    throw err;
+  }
 }
 
 // ---------------------------------------------------------------------------
-// Reserve slot
+// Reserve slot — checkedInAt intentionally NOT set
 // ---------------------------------------------------------------------------
 
 export async function reserveSlot(
@@ -318,8 +332,6 @@ export async function getQueueEntryById(
   id: string,
   clinicId: string
 ): Promise<QueueEntrySummary> {
-  await findEntryOrThrow(id, clinicId);
-
   const entry = await prisma.queueEntry.findFirst({
     where: { id, clinicId },
     select: queueEntrySummarySelect,
@@ -340,42 +352,105 @@ export async function callNext(
 ): Promise<QueueEntrySummary> {
   const queueDate = getTodayDate();
 
-  const inProgress = await prisma.queueEntry.findFirst({
-    where: { clinicId, queueDate, status: "IN_PROGRESS" },
-    select: { id: true, queueNumber: true },
-  });
+  const entry = await prisma.$transaction(async (tx) => {
+    const inProgress = await tx.queueEntry.findFirst({
+      where: { clinicId, queueDate, status: "IN_PROGRESS" },
+      select: { id: true, queueNumber: true },
+    });
 
-  if (inProgress) {
-    throw new ConflictError(
-      `Patient #${inProgress.queueNumber} is currently being served. Please complete or cancel before calling next.`
-    );
-  }
+    if (inProgress) {
+      throw new ConflictError(
+        `Patient #${inProgress.queueNumber} is currently being served. Please complete or cancel before calling next.`
+      );
+    }
 
-  const next = await prisma.queueEntry.findFirst({
-    where: { clinicId, queueDate, status: "WAITING" },
-    orderBy: { queueNumber: "asc" },
-    select: { id: true },
-  });
+    const next = await tx.queueEntry.findFirst({
+      where: { clinicId, queueDate, status: "WAITING" },
+      orderBy: { queueNumber: "asc" },
+      select: { id: true },
+    });
 
-  if (!next) {
-    throw new NotFoundError("No waiting patients in the queue");
-  }
+    if (!next) {
+      throw new NotFoundError("No waiting patients in the queue");
+    }
 
-  const entry = await prisma.queueEntry.update({
-    where: { id: next.id },
-    data: {
-      status: "IN_PROGRESS",
-      calledAt: new Date(),
-      updatedById,
-    },
-    select: queueEntrySummarySelect,
+    const result = await tx.queueEntry.updateMany({
+      where: { id: next.id, clinicId, status: "WAITING" },
+      data: {
+        status: "IN_PROGRESS",
+        calledAt: new Date(),
+        updatedById,
+      },
+    });
+
+    if (result.count === 0) {
+      throw new ConflictError(
+        "Queue state changed during request. Please retry."
+      );
+    }
+
+    const updated = await tx.queueEntry.findFirst({
+      where: { id: next.id, clinicId },
+      select: queueEntrySummarySelect,
+    });
+
+    if (!updated) throw new NotFoundError("Queue entry not found after update");
+    return updated;
   });
 
   return entry as QueueEntrySummary;
 }
 
 // ---------------------------------------------------------------------------
-// Mark as served
+// Start consultation
+// ---------------------------------------------------------------------------
+
+export async function startConsultation(
+  id: string,
+  clinicId: string,
+  updatedById: string
+): Promise<QueueEntrySummary> {
+  const existing = await findEntryOrThrow(id, clinicId);
+
+  if (existing.status !== "IN_PROGRESS") {
+    throw new BadRequestError(
+      `Cannot start consultation: entry must be IN_PROGRESS (current: ${existing.status})`
+    );
+  }
+
+  if (existing.startedAt !== null) {
+    throw new ConflictError(
+      "Consultation has already been started for this queue entry"
+    );
+  }
+
+  const now = new Date();
+
+  const entry = await prisma.$transaction(async (tx) => {
+    const updated = await tx.queueEntry.update({
+      where: { id },
+      data: {
+        startedAt: now,
+        updatedById,
+      },
+      select: queueEntrySummarySelect,
+    });
+
+    if (existing.visitId) {
+      await tx.visit.update({
+        where: { id: existing.visitId },
+        data: { startedAt: now },
+      });
+    }
+
+    return updated;
+  });
+
+  return entry as QueueEntrySummary;
+}
+
+// ---------------------------------------------------------------------------
+// Mark as served — preserves checkedInAt and startedAt
 // ---------------------------------------------------------------------------
 
 export async function markServed(
@@ -387,21 +462,34 @@ export async function markServed(
 
   assertStatusTransition(existing.status, "SERVED");
 
-  const entry = await prisma.queueEntry.update({
-    where: { id },
-    data: {
-      status: "SERVED",
-      servedAt: new Date(),
-      updatedById,
-    },
-    select: queueEntrySummarySelect,
+  const now = new Date();
+
+  const entry = await prisma.$transaction(async (tx) => {
+    const updated = await tx.queueEntry.update({
+      where: { id },
+      data: {
+        status: "SERVED",
+        servedAt: now,
+        updatedById,
+      },
+      select: queueEntrySummarySelect,
+    });
+
+    if (existing.visitId) {
+      await tx.visit.update({
+        where: { id: existing.visitId },
+        data: { completedAt: now },
+      });
+    }
+
+    return updated;
   });
 
   return entry as QueueEntrySummary;
 }
 
 // ---------------------------------------------------------------------------
-// Skip patient (send back to waiting)
+// Skip patient — resets calledAt AND startedAt, preserves checkedInAt
 // ---------------------------------------------------------------------------
 
 export async function skipPatient(
@@ -418,6 +506,7 @@ export async function skipPatient(
     data: {
       status: "WAITING",
       calledAt: null,
+      startedAt: null,
       updatedById,
     },
     select: queueEntrySummarySelect,
@@ -427,7 +516,7 @@ export async function skipPatient(
 }
 
 // ---------------------------------------------------------------------------
-// Recall skipped patient
+// Recall patient
 // ---------------------------------------------------------------------------
 
 export async function recallPatient(
@@ -579,12 +668,16 @@ export async function getQueueStatistics(
           clinicId,
           queueDate,
           status: "SERVED",
+          isReserved: false,
+          checkedInAt: { not: null },
           calledAt: { not: null },
+          startedAt: { not: null },
           servedAt: { not: null },
         },
         select: {
-          createdAt: true,
+          checkedInAt: true,
           calledAt: true,
+          startedAt: true,
           servedAt: true,
         },
       }),
@@ -595,12 +688,16 @@ export async function getQueueStatistics(
 
   if (servedEntries.length > 0) {
     const waitTimes = servedEntries
-      .filter((e) => e.calledAt !== null)
-      .map((e) => (e.calledAt!.getTime() - e.createdAt.getTime()) / 1000 / 60);
+      .filter((e) => e.calledAt !== null && e.checkedInAt !== null)
+      .map(
+        (e) => (e.calledAt!.getTime() - e.checkedInAt!.getTime()) / 1000 / 60
+      )
+      .filter((t) => t >= 0);
 
     const serveTimes = servedEntries
-      .filter((e) => e.calledAt !== null && e.servedAt !== null)
-      .map((e) => (e.servedAt!.getTime() - e.calledAt!.getTime()) / 1000 / 60);
+      .filter((e) => e.servedAt !== null && e.startedAt !== null)
+      .map((e) => (e.servedAt!.getTime() - e.startedAt!.getTime()) / 1000 / 60)
+      .filter((t) => t >= 0);
 
     if (waitTimes.length > 0) {
       averageWaitTimeMinutes = parseFloat(
