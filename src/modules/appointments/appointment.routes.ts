@@ -23,7 +23,9 @@ router.post("/", AppointmentController.createAppointment);
 
 router.get("/:id", AppointmentController.getAppointmentById);
 router.patch("/:id", AppointmentController.updateAppointment);
+router.patch("/:id/confirm", AppointmentController.confirmAppointment);
 router.patch("/:id/cancel", AppointmentController.cancelAppointment);
 router.patch("/:id/complete", AppointmentController.completeAppointment);
+router.patch("/:id/no-show", AppointmentController.noShowAppointment);
 
 export default router;

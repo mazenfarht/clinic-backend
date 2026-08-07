@@ -98,6 +98,24 @@ export const updateAppointment = asyncHandler(
 );
 
 // ---------------------------------------------------------------------------
+// PATCH /appointments/:id/confirm
+// ---------------------------------------------------------------------------
+
+export const confirmAppointment = asyncHandler(
+  async (req: Request, res: Response) => {
+    const { clinicId, userId } = resolveAuth(req);
+    const { id } = appointmentIdSchema.parse(req.params);
+    const appointment = await AppointmentService.confirmAppointment(
+      id,
+      clinicId,
+      userId
+    );
+
+    ApiResponse.ok(res, appointment, "Appointment confirmed successfully");
+  }
+);
+
+// ---------------------------------------------------------------------------
 // PATCH /appointments/:id/cancel
 // ---------------------------------------------------------------------------
 
@@ -130,5 +148,27 @@ export const completeAppointment = asyncHandler(
     );
 
     ApiResponse.ok(res, appointment, "Appointment completed successfully");
+  }
+);
+
+// ---------------------------------------------------------------------------
+// PATCH /appointments/:id/no-show
+// ---------------------------------------------------------------------------
+
+export const noShowAppointment = asyncHandler(
+  async (req: Request, res: Response) => {
+    const { clinicId, userId } = resolveAuth(req);
+    const { id } = appointmentIdSchema.parse(req.params);
+    const appointment = await AppointmentService.noShowAppointment(
+      id,
+      clinicId,
+      userId
+    );
+
+    ApiResponse.ok(
+      res,
+      appointment,
+      "Appointment marked as no-show successfully"
+    );
   }
 );

@@ -30,6 +30,8 @@ const visitSummarySelect = {
   prescription: true,
   notes: true,
   startedAt: true,
+  completedAt: true,
+  followUpDate: true,
   createdAt: true,
   updatedAt: true,
   patient: {
@@ -227,7 +229,7 @@ export async function createVisit(
         treatment: input.treatment ?? null,
         prescription: input.prescription ?? null,
         notes: input.notes ?? null,
-        // startedAt is null at creation — set later via startConsultation
+        // startedAt, completedAt, followUpDate are null at creation
       },
       select: visitDetailSelect,
     });
@@ -368,10 +370,20 @@ export async function updateVisit(
 ): Promise<VisitDetail> {
   await findVisitOrThrow(id, clinicId);
 
+  const { followUpDate, ...rest } = input;
+
   const visit = await prisma.visit.update({
     where: { id },
     data: {
-      ...input,
+      ...rest,
+      ...(followUpDate !== undefined
+        ? {
+            followUpDate:
+              followUpDate === null
+                ? null
+                : new Date(`${followUpDate}T00:00:00.000Z`),
+          }
+        : {}),
       updatedById,
     },
     select: visitDetailSelect,

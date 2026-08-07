@@ -11,6 +11,8 @@ export interface VisitSummary {
   prescription: string | null;
   notes: string | null;
   startedAt: Date | null;
+  completedAt: Date | null;
+  followUpDate: Date | null;
   createdAt: Date;
   updatedAt: Date;
   patient: {

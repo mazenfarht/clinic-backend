@@ -7,7 +7,10 @@ import {
   BadRequestError,
 } from "../../shared/errors/AppError";
 import { ApiResponse } from "../../shared/utils/apiResponse";
-import { ALLOWED_STATUS_TRANSITIONS } from "./appointment.types";
+import {
+  ALLOWED_STATUS_TRANSITIONS,
+  STATUSES_BLOCKING_CONFLICT,
+} from "./appointment.types";
 import type {
   AppointmentFilters,
   AppointmentListResult,
@@ -130,7 +133,7 @@ async function assertNoTimeConflict(
       clinicId,
       appointmentDate: dateTime,
       appointmentTime: dateTime,
-      status: { not: "CANCELLED" },
+      status: { in: STATUSES_BLOCKING_CONFLICT },
       ...(excludeId ? { id: { not: excludeId } } : {}),
     },
     select: { id: true },
@@ -304,8 +307,10 @@ export async function updateAppointment(
 ): Promise<AppointmentSummary> {
   const existing = await findAppointmentOrThrow(id, clinicId);
 
-  if (existing.status !== "SCHEDULED") {
-    throw new BadRequestError("Only scheduled appointments can be updated");
+  if (existing.status !== "SCHEDULED" && existing.status !== "CONFIRMED") {
+    throw new BadRequestError(
+      "Only scheduled or confirmed appointments can be updated"
+    );
   }
 
   if (input.appointmentDate || input.appointmentTime) {
@@ -381,6 +386,31 @@ export async function cancelAppointment(
 }
 
 // ---------------------------------------------------------------------------
+// Confirm appointment
+// ---------------------------------------------------------------------------
+
+export async function confirmAppointment(
+  id: string,
+  clinicId: string,
+  updatedById: string
+): Promise<AppointmentSummary> {
+  const existing = await findAppointmentOrThrow(id, clinicId);
+
+  assertStatusTransition(existing.status, "CONFIRMED");
+
+  const appointment = await prisma.appointment.update({
+    where: { id },
+    data: {
+      status: "CONFIRMED",
+      updatedById,
+    },
+    select: appointmentSummarySelect,
+  });
+
+  return appointment as AppointmentSummary;
+}
+
+// ---------------------------------------------------------------------------
 // Complete appointment
 // ---------------------------------------------------------------------------
 
@@ -397,6 +427,31 @@ export async function completeAppointment(
     where: { id },
     data: {
       status: "COMPLETED",
+      updatedById,
+    },
+    select: appointmentSummarySelect,
+  });
+
+  return appointment as AppointmentSummary;
+}
+
+// ---------------------------------------------------------------------------
+// No-show appointment
+// ---------------------------------------------------------------------------
+
+export async function noShowAppointment(
+  id: string,
+  clinicId: string,
+  updatedById: string
+): Promise<AppointmentSummary> {
+  const existing = await findAppointmentOrThrow(id, clinicId);
+
+  assertStatusTransition(existing.status, "NO_SHOW");
+
+  const appointment = await prisma.appointment.update({
+    where: { id },
+    data: {
+      status: "NO_SHOW",
       updatedById,
     },
     select: appointmentSummarySelect,

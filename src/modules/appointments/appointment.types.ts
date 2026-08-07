@@ -71,6 +71,15 @@ export type AllowedStatusTransition = {
 };
 
 export const ALLOWED_STATUS_TRANSITIONS: AllowedStatusTransition[] = [
+  { from: "SCHEDULED", to: "CONFIRMED" },
   { from: "SCHEDULED", to: "CANCELLED" },
-  { from: "SCHEDULED", to: "COMPLETED" },
+  { from: "SCHEDULED", to: "NO_SHOW" },
+  { from: "CONFIRMED", to: "CANCELLED" },
+  { from: "CONFIRMED", to: "COMPLETED" },
+  { from: "CONFIRMED", to: "NO_SHOW" },
+];
+
+export const STATUSES_BLOCKING_CONFLICT: AppointmentStatus[] = [
+  "SCHEDULED",
+  "CONFIRMED",
 ];

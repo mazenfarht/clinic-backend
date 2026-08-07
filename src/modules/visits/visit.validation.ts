@@ -81,6 +81,19 @@ export const updateVisitSchema = z
       .max(1000, "Notes must not exceed 1000 characters")
       .nullable()
       .optional(),
+    followUpDate: z
+      .string()
+      .trim()
+      .regex(
+        /^\d{4}-\d{2}-\d{2}$/,
+        "Follow-up date must be in YYYY-MM-DD format"
+      )
+      .refine(
+        (val) => new Date(val) > new Date(new Date().setUTCHours(0, 0, 0, 0)),
+        "Follow-up date must be in the future"
+      )
+      .nullable()
+      .optional(),
   })
   .refine((data) => Object.keys(data).length > 0, {
     message: "At least one field must be provided for update",

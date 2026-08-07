@@ -35,7 +35,7 @@ None
 ```json
 {
   "email": "admin@clinic.com",
-  "password": "NewAdmin@456"
+  "password": "Mazen@1710"
 }
 ```
 
