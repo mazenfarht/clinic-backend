@@ -11,6 +11,7 @@ import { patientVisitRouter, visitRoutes } from "../modules/visits";
 import { dashboardRoutes } from "../modules/dashboard";
 import { clinicSettingsRoutes } from "../modules/clinic-settings";
 import publicRoutes from "../modules/public";
+import usersRouter from "../modules/users"; // ← ADD THIS LINE
 
 const router = Router();
 
@@ -44,5 +45,6 @@ router.use("/patients/:patientId/visits", patientVisitRouter);
 router.use("/dashboard", dashboardRoutes);
 router.use("/clinic-settings", clinicSettingsRoutes);
 router.use("/public", publicRoutes);
+router.use("/users", usersRouter); // ← ADD THIS LINE
 
 export default router;

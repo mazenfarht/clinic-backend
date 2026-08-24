@@ -1,20 +1,22 @@
-// src/modules/clinic-settings/clinic-settings.routes.ts
+// src/modules/users/users.routes.ts
 
 import { Router } from "express";
-import * as ClinicSettingsController from "./clinic-settings.controller";
+import * as UsersController from "./users.controller";
 import { authMiddleware } from "../auth/auth.middleware";
 import { requireRoles } from "../auth/role.middleware";
 
 const router = Router();
 
-router.use(authMiddleware);
-router.use(requireRoles("DOCTOR"));
-
 // ---------------------------------------------------------------------------
-// Clinic settings routes
+// POST /users/receptionist
+// Requires: valid access token + DOCTOR role
 // ---------------------------------------------------------------------------
 
-router.get("/", ClinicSettingsController.getClinicSettings);
-router.patch("/", ClinicSettingsController.updateClinicSettings);
+router.post(
+  "/receptionist",
+  authMiddleware,
+  requireRoles("DOCTOR"),
+  UsersController.createReceptionist
+);
 
 export default router;

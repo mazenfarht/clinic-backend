@@ -157,14 +157,17 @@ export async function checkIn(
         id: input.appointmentId,
         clinicId,
         patientId: input.patientId,
-        status: "SCHEDULED",
+        status: {
+          in: ["SCHEDULED", "CONFIRMED"],
+        },
+        appointmentDate: queueDate,
       },
       select: { id: true, visitId: true },
     });
 
     if (!appointment) {
       throw new NotFoundError(
-        "Appointment not found, does not belong to this patient, or is not scheduled"
+        "Appointment not found, does not belong to this patient, is not scheduled or confirmed, or is not for today"
       );
     }
 
