@@ -874,6 +874,31 @@ Authorization: Bearer <accessToken>
 
 ## Appointments
 
+### Appointment Status Values
+
+| Status      | Description                                                             |
+| ----------- | ----------------------------------------------------------------------- |
+| `SCHEDULED` | Default status when an appointment is created. Awaiting confirmation.   |
+| `CONFIRMED` | Appointment has been confirmed (e.g. by the clinic or patient).         |
+| `COMPLETED` | Appointment was attended and marked complete via `PATCH /:id/complete`. |
+| `CANCELLED` | Appointment was cancelled via `PATCH /:id/cancel`.                      |
+| `NO_SHOW`   | Patient did not attend the appointment.                                 |
+
+**Allowed Status Transitions**
+
+| From        | To          | Endpoint                            |
+| ----------- | ----------- | ----------------------------------- |
+| `SCHEDULED` | `CONFIRMED` | `PATCH /appointments/:id/confirm`   |
+| `SCHEDULED` | `CANCELLED` | `PATCH /appointments/:id/cancel`    |
+| `SCHEDULED` | `NO_SHOW`   | `PATCH /appointments/:id/no-show`   |
+| `CONFIRMED` | `COMPLETED` | `PATCH /appointments/:id/complete`  |
+| `CONFIRMED` | `CANCELLED` | `PATCH /appointments/:id/cancel`    |
+| `CONFIRMED` | `NO_SHOW`   | `PATCH /appointments/:id/no-show`   |
+
+**Slot Conflict Rule:** Only `SCHEDULED` and `CONFIRMED` appointments block the same date/time slot from being booked again.
+
+---
+
 ### POST /appointments
 
 **Purpose:** Books a new appointment for a patient. Prevents double-booking the same time slot.
@@ -969,16 +994,16 @@ Authorization: Bearer <accessToken>
 
 **Query Parameters**
 
-| Parameter | Type    | Default | Description                           |
-| --------- | ------- | ------- | ------------------------------------- |
-| search    | string  | —       | Searches patient fullName, phone, MRN |
-| status    | enum    | —       | SCHEDULED, COMPLETED, CANCELLED       |
-| patientId | UUID    | —       | Filter by specific patient            |
-| date      | string  | —       | Exact date filter YYYY-MM-DD          |
-| fromDate  | string  | —       | Start of date range YYYY-MM-DD        |
-| toDate    | string  | —       | End of date range YYYY-MM-DD          |
-| page      | integer | 1       | Page number, min 1                    |
-| limit     | integer | 10      | Results per page, min 1, max 100      |
+| Parameter | Type    | Default | Description                                         |
+| --------- | ------- | ------- | --------------------------------------------------- |
+| search    | string  | —       | Searches patient fullName, phone, MRN               |
+| status    | enum    | —       | SCHEDULED, CONFIRMED, COMPLETED, CANCELLED, NO_SHOW |
+| patientId | UUID    | —       | Filter by specific patient                          |
+| date      | string  | —       | Exact date filter YYYY-MM-DD                        |
+| fromDate  | string  | —       | Start of date range YYYY-MM-DD                      |
+| toDate    | string  | —       | End of date range YYYY-MM-DD                        |
+| page      | integer | 1       | Page number, min 1                                  |
+| limit     | integer | 10      | Results per page, min 1, max 100                    |
 
 **Sorting:** `appointmentDate` ascending, then `appointmentTime` ascending
 
@@ -1105,7 +1130,7 @@ Authorization: Bearer <accessToken>
 
 ### PATCH /appointments/:id
 
-**Purpose:** Updates a SCHEDULED appointment's date, time, or notes. Validates for slot conflicts.
+**Purpose:** Updates a `SCHEDULED` or `CONFIRMED` appointment's date, time, or notes. Validates for slot conflicts.
 
 **Authentication:** Required
 
@@ -1168,7 +1193,7 @@ Content-Type: application/json
 | ------ | ---------------------------------------------- |
 | `400`  | Validation failed                              |
 | `400`  | At least one field must be provided for update |
-| `400`  | Only scheduled appointments can be updated     |
+| `400`  | Only scheduled or confirmed appointments can be updated |
 | `401`  | Unauthorized                                   |
 | `403`  | Insufficient role                              |
 | `404`  | Appointment not found                          |
@@ -1198,7 +1223,7 @@ Authorization: Bearer <accessToken>
 
 **Request Body:** None
 
-**Status Transition:** `SCHEDULED → CANCELLED`
+**Status Transition:** `SCHEDULED → CANCELLED` or `CONFIRMED → CANCELLED`
 
 **Success Response (200)**
 
@@ -1226,9 +1251,9 @@ Authorization: Bearer <accessToken>
 
 ---
 
-### PATCH /appointments/:id/complete
+### PATCH /appointments/:id/confirm
 
-**Purpose:** Marks a SCHEDULED appointment as COMPLETED.
+**Purpose:** Confirms a `SCHEDULED` appointment.
 
 **Authentication:** Required
 
@@ -1248,7 +1273,57 @@ Authorization: Bearer <accessToken>
 
 **Request Body:** None
 
-**Status Transition:** `SCHEDULED → COMPLETED`
+**Status Transition:** `SCHEDULED → CONFIRMED`
+
+**Success Response (200)**
+
+```json
+{
+  "success": true,
+  "message": "Appointment confirmed successfully",
+  "data": {
+    "id": "uuid",
+    "status": "CONFIRMED",
+    "updatedBy": { "id": "uuid", "fullName": "Dr. Ahmed Mohamed" },
+    "updatedAt": "2024-01-15T11:00:00.000Z"
+  }
+}
+```
+
+**Error Responses**
+
+| Status | Message                                                        |
+| ------ | -------------------------------------------------------------- |
+| `400`  | Cannot transition appointment from "CONFIRMED" to "CONFIRMED" |
+| `401`  | Unauthorized                                                   |
+| `403`  | Insufficient role                                              |
+| `404`  | Appointment not found                                          |
+
+---
+
+### PATCH /appointments/:id/complete
+
+**Purpose:** Marks a `CONFIRMED` appointment as `COMPLETED`.
+
+**Authentication:** Required
+
+**Roles:** DOCTOR, RECEPTIONIST
+
+**Headers:**
+
+```
+Authorization: Bearer <accessToken>
+```
+
+**Path Parameters**
+
+| Parameter | Type | Required | Description            |
+| --------- | ---- | -------- | ---------------------- |
+| id        | UUID | Yes      | The appointment's UUID |
+
+**Request Body:** None
+
+**Status Transition:** `CONFIRMED → COMPLETED`
 
 **Success Response (200)**
 
@@ -1276,6 +1351,56 @@ Authorization: Bearer <accessToken>
 
 ---
 
+### PATCH /appointments/:id/no-show
+
+**Purpose:** Marks a `SCHEDULED` or `CONFIRMED` appointment as `NO_SHOW`.
+
+**Authentication:** Required
+
+**Roles:** DOCTOR, RECEPTIONIST
+
+**Headers:**
+
+```
+Authorization: Bearer <accessToken>
+```
+
+**Path Parameters**
+
+| Parameter | Type | Required | Description            |
+| --------- | ---- | -------- | ---------------------- |
+| id        | UUID | Yes      | The appointment's UUID |
+
+**Request Body:** None
+
+**Status Transitions:** `SCHEDULED → NO_SHOW` or `CONFIRMED → NO_SHOW`
+
+**Success Response (200)**
+
+```json
+{
+  "success": true,
+  "message": "Appointment marked as no-show successfully",
+  "data": {
+    "id": "uuid",
+    "status": "NO_SHOW",
+    "updatedBy": { "id": "uuid", "fullName": "Dr. Ahmed Mohamed" },
+    "updatedAt": "2024-01-15T11:00:00.000Z"
+  }
+}
+```
+
+**Error Responses**
+
+| Status | Message                                                     |
+| ------ | ----------------------------------------------------------- |
+| `400`  | Cannot transition appointment from "COMPLETED" to "NO_SHOW" |
+| `401`  | Unauthorized                                                |
+| `403`  | Insufficient role                                           |
+| `404`  | Appointment not found                                       |
+
+---
+
 ## Visits
 
 ### POST /visits
@@ -1284,7 +1409,7 @@ Authorization: Bearer <accessToken>
 
 **Authentication:** Required
 
-**Roles:** DOCTOR only
+**Roles:** DOCTOR, RECEPTIONIST only
 
 **Headers:**
 
@@ -1314,7 +1439,7 @@ Content-Type: application/json
 | Field          | Type   | Required | Rules                                            |
 | -------------- | ------ | -------- | ------------------------------------------------ |
 | patientId      | UUID   | Yes      | Must reference an active non-deleted patient     |
-| appointmentId  | UUID   | No       | Must be a SCHEDULED appointment for this patient |
+| appointmentId  | UUID   | No       | Must not be cancelled and must not already have a visit linked |
 | queueEntryId   | UUID   | No       | Must be an unlinked queue entry                  |
 | visitDate      | string | No       | Format YYYY-MM-DD, defaults to today             |
 | chiefComplaint | string | No       | Max 500 characters                               |
@@ -1339,6 +1464,9 @@ Content-Type: application/json
     "treatment": "Rest and paracetamol",
     "prescription": "Paracetamol 500mg",
     "notes": "Patient looked fatigued",
+    "startedAt": null,
+    "completedAt": null,
+    "followUpDate": null,
     "createdAt": "2024-01-15T10:00:00.000Z",
     "updatedAt": "2024-01-15T10:00:00.000Z",
     "patient": {
@@ -1431,6 +1559,9 @@ Authorization: Bearer <accessToken>
       "treatment": "Rest",
       "prescription": "Paracetamol",
       "notes": null,
+      "startedAt": null,
+      "completedAt": "2024-01-15T10:30:00.000Z",
+      "followUpDate": null,
       "createdAt": "2024-01-15T10:00:00.000Z",
       "updatedAt": "2024-01-15T10:00:00.000Z",
       "patient": {
@@ -1502,6 +1633,9 @@ Authorization: Bearer <accessToken>
     "treatment": "Rest and paracetamol",
     "prescription": "Paracetamol 500mg",
     "notes": null,
+    "startedAt": "2024-01-15T10:02:00.000Z",
+    "completedAt": "2024-01-15T10:20:00.000Z",
+    "followUpDate": null,
     "createdAt": "2024-01-15T10:00:00.000Z",
     "updatedAt": "2024-01-15T10:00:00.000Z",
     "patient": {
@@ -1598,7 +1732,7 @@ Authorization: Bearer <accessToken>
 
 **Authentication:** Required
 
-**Roles:** DOCTOR only
+**Roles:** DOCTOR, RECEPTIONIST only
 
 **Headers:**
 
@@ -1621,21 +1755,31 @@ Content-Type: application/json
   "diagnosis": "Updated diagnosis",
   "treatment": "Updated treatment",
   "prescription": "Updated prescription",
-  "notes": "Updated notes"
+  "notes": "Updated notes",
+  "followUpDate": "2024-02-15"
 }
 ```
 
 **Mutable Fields**
 
-| Field          | Mutable | Notes                    |
-| -------------- | ------- | ------------------------ |
-| patientId      | No      | Cannot be changed        |
-| visitDate      | No      | Cannot be changed        |
-| chiefComplaint | Yes     | Max 500 chars, nullable  |
-| diagnosis      | Yes     | Max 1000 chars, nullable |
-| treatment      | Yes     | Max 1000 chars, nullable |
-| prescription   | Yes     | Max 1000 chars, nullable |
-| notes          | Yes     | Max 1000 chars, nullable |
+| Field          | Mutable | Notes                       |
+| -------------- | ------- | --------------------------- |
+| patientId      | No      | Cannot be changed           |
+| visitDate      | No      | Cannot be changed           |
+| chiefComplaint | Yes     | Max 500 chars, nullable     |
+| diagnosis      | Yes     | Max 1000 chars, nullable    |
+| treatment      | Yes     | Max 1000 chars, nullable    |
+| prescription   | Yes     | Max 1000 chars, nullable    |
+| notes          | Yes     | Max 1000 chars, nullable    |
+| followUpDate   | Yes     | Format YYYY-MM-DD, nullable |
+
+**Visit Timestamp Fields**
+
+| Field          | Nullable | Description                                                                 |
+| -------------- | -------- | --------------------------------------------------------------------------- |
+| `startedAt`    | Yes      | Timestamp when the visit actually started (consultation began).             |
+| `completedAt`  | Yes      | Timestamp when the visit was completed.                                     |
+| `followUpDate` | Yes      | Date scheduled for a follow-up visit. Format: `YYYY-MM-DD`. `null` if none. |
 
 **Success Response (200)**
 
@@ -1670,7 +1814,7 @@ Content-Type: application/json
 
 **Authentication:** Required
 
-**Roles:** DOCTOR only
+**Roles:** DOCTOR, RECEPTIONIST only
 
 **Headers:**
 
@@ -1728,6 +1872,7 @@ IN_PROGRESS ──────────────────────�
 | `IN_PROGRESS → SERVED`    | `PATCH /queue/:id/serve`  | Marks patient as served                   |
 | `IN_PROGRESS → WAITING`   | `PATCH /queue/:id/skip`   | Sends patient back to waiting             |
 | `WAITING → IN_PROGRESS`   | `PATCH /queue/:id/recall` | Directly calls a specific waiting patient |
+| `IN_PROGRESS (startedAt)` | `PATCH /queue/:id/start`  | Starts the consultation; sets `startedAt` |
 | `WAITING → CANCELLED`     | `PATCH /queue/:id/cancel` | Cancels a waiting entry                   |
 | `IN_PROGRESS → CANCELLED` | `PATCH /queue/:id/cancel` | Cancels the currently serving entry       |
 
@@ -1783,7 +1928,9 @@ Content-Type: application/json
     "isReserved": false,
     "reservedFor": null,
     "status": "WAITING",
+    "checkedInAt": "2024-01-15T09:00:00.000Z",
     "calledAt": null,
+    "startedAt": null,
     "servedAt": null,
     "createdAt": "2024-01-15T09:00:00.000Z",
     "updatedAt": "2024-01-15T09:00:00.000Z",
@@ -1804,6 +1951,15 @@ Content-Type: application/json
 }
 ```
 
+**QueueEntry Timestamp Fields**
+
+| Field         | Nullable | Description                                                                                                                                                         |
+| ------------- | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `checkedInAt` | Yes      | Timestamp when the patient checked in to the queue. Set at check-in time.                                                                                           |
+| `calledAt`    | Yes      | Timestamp when the patient was called (status moved to `IN_PROGRESS`).                                                                                              |
+| `startedAt`   | Yes      | Timestamp when the doctor actually started the consultation. Distinct from `calledAt`, which records when the patient was summoned, not when the appointment began. |
+| `servedAt`    | Yes      | Timestamp when the queue entry was marked `SERVED`.                                                                                                                 |
+
 **Error Responses**
 
 | Status | Message                                                                     |
@@ -1812,7 +1968,7 @@ Content-Type: application/json
 | `401`  | Unauthorized                                                                |
 | `403`  | Insufficient role                                                           |
 | `404`  | Patient not found or has been deleted                                       |
-| `404`  | Appointment not found, does not belong to this patient, or is not scheduled |
+| `404`  | Appointment not found, does not belong to this patient, is not scheduled or confirmed, or is not for today |
 | `409`  | Patient already has an active queue entry for today                         |
 | `409`  | Appointment already has a visit linked to it                                |
 
@@ -1866,7 +2022,9 @@ Content-Type: application/json
     "isReserved": true,
     "reservedFor": "VIP Patient Name",
     "status": "WAITING",
+    "checkedInAt": null,
     "calledAt": null,
+    "startedAt": null,
     "servedAt": null,
     "createdAt": "2024-01-15T08:00:00.000Z",
     "updatedAt": "2024-01-15T08:00:00.000Z",
@@ -1917,6 +2075,7 @@ Authorization: Bearer <accessToken>
     "queueNumber": 4,
     "status": "IN_PROGRESS",
     "calledAt": "2024-01-15T10:30:00.000Z",
+    "startedAt": null,
     "visit": {
       "id": "uuid",
       "visitDate": "2024-01-15T00:00:00.000Z",
@@ -2023,7 +2182,9 @@ Authorization: Bearer <accessToken>
       "isReserved": false,
       "reservedFor": null,
       "status": "WAITING",
+      "checkedInAt": "2024-01-15T08:00:00.000Z",
       "calledAt": null,
+      "startedAt": null,
       "servedAt": null,
       "createdAt": "2024-01-15T08:00:00.000Z",
       "updatedAt": "2024-01-15T08:00:00.000Z",
@@ -2092,7 +2253,9 @@ Authorization: Bearer <accessToken>
       "id": "uuid",
       "queueNumber": 3,
       "status": "IN_PROGRESS",
+      "checkedInAt": "2024-01-15T09:45:00.000Z",
       "calledAt": "2024-01-15T10:15:00.000Z",
+      "startedAt": null,
       "visit": {
         "id": "uuid",
         "visitDate": "2024-01-15T00:00:00.000Z",
@@ -2177,6 +2340,17 @@ Authorization: Bearer <accessToken>
 }
 ```
 
+**Time Calculation Formulas**
+
+| Field                     | Formula                   | Notes                                                                                                                                                                                                 |
+| ------------------------- | ------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `averageWaitTimeMinutes`  | `calledAt − checkedInAt`  | Averaged over `SERVED`, non-reserved entries that have `checkedInAt`, `calledAt`, `startedAt`, and `servedAt` populated. Negative values are excluded.                                              |
+| `averageServeTimeMinutes` | `servedAt − startedAt`    | Same entry filter as above. Negative values are excluded.                                                                                                                                             |
+
+If any required timestamp is `null`, that entry is excluded from the respective average. Reserved slots (`isReserved: true`) are excluded from average calculations. The counts (`total`, `waiting`, `inProgress`, `served`, `cancelled`) always include all entries regardless of timestamp availability.
+
+> **Note:** Dashboard endpoints (`GET /dashboard/today`, `GET /dashboard/queue`, `GET /dashboard/analytics`) compute queue time averages differently: `averageWaitTimeMinutes = calledAt − createdAt` and `averageServeTimeMinutes = servedAt − calledAt`.
+
 **Error Responses**
 
 | Status | Message             |
@@ -2224,7 +2398,9 @@ Authorization: Bearer <accessToken>
     "isReserved": false,
     "reservedFor": null,
     "status": "WAITING",
+    "checkedInAt": "2024-01-15T09:00:00.000Z",
     "calledAt": null,
+    "startedAt": null,
     "servedAt": null,
     "visit": {
       "id": "uuid",
@@ -2280,6 +2456,8 @@ Authorization: Bearer <accessToken>
 
 **Status Transition:** `IN_PROGRESS → SERVED`
 
+**Effect:** Sets `servedAt` on the queue entry. If the entry has a linked visit, also sets `visit.completedAt` to the same timestamp.
+
 **Success Response (200)**
 
 ```json
@@ -2291,6 +2469,7 @@ Authorization: Bearer <accessToken>
     "queueNumber": 3,
     "status": "SERVED",
     "calledAt": "2024-01-15T10:15:00.000Z",
+    "startedAt": "2024-01-15T10:17:00.000Z",
     "servedAt": "2024-01-15T10:28:00.000Z"
   }
 }
@@ -2331,6 +2510,8 @@ Authorization: Bearer <accessToken>
 
 **Status Transition:** `IN_PROGRESS → WAITING`
 
+**Effect:** Resets `calledAt` and `startedAt` to `null`. Preserves `checkedInAt`.
+
 **Success Response (200)**
 
 ```json
@@ -2341,7 +2522,8 @@ Authorization: Bearer <accessToken>
     "id": "uuid",
     "queueNumber": 3,
     "status": "WAITING",
-    "calledAt": null
+    "calledAt": null,
+    "startedAt": null
   }
 }
 ```
@@ -2454,6 +2636,66 @@ Authorization: Bearer <accessToken>
 | `401`  | Unauthorized                                               |
 | `403`  | Insufficient role                                          |
 | `404`  | Queue entry not found                                      |
+
+---
+
+### PATCH /queue/:id/start
+
+**Purpose:** Starts the consultation for an `IN_PROGRESS` queue entry. Sets `startedAt` to the current timestamp. This marks the moment the doctor actually begins the appointment, which is distinct from `calledAt` (when the patient was summoned to the room).
+
+**Authentication:** Required
+
+**Roles:** DOCTOR, RECEPTIONIST
+
+**Headers:**
+
+```
+Authorization: Bearer <accessToken>
+```
+
+**Path Parameters**
+
+| Parameter | Type | Required | Description            |
+| --------- | ---- | -------- | ---------------------- |
+| id        | UUID | Yes      | The queue entry's UUID |
+
+**Request Body:** None
+
+**Effect:** Sets `startedAt` on the queue entry. Does not change `status` — the entry remains `IN_PROGRESS`. If the entry has a linked visit, also sets `visit.startedAt` to the same timestamp.
+
+**Queue Timestamp Sequence**
+
+| Field         | Set by                                              | Meaning                                            |
+| ------------- | --------------------------------------------------- | -------------------------------------------------- |
+| `checkedInAt` | `POST /queue/check-in`                              | When the patient checked in to the queue.          |
+| `calledAt`    | `POST /queue/call-next` / `PATCH /queue/:id/recall` | When the patient was called/summoned.              |
+| `startedAt`   | `PATCH /queue/:id/start`                            | When the doctor actually started the consultation. |
+| `servedAt`    | `PATCH /queue/:id/serve`                            | When the queue entry was marked as fully served.   |
+
+**Success Response (200)**
+
+```json
+{
+  "success": true,
+  "message": "Consultation started successfully",
+  "data": {
+    "id": "uuid",
+    "queueNumber": 3,
+    "status": "IN_PROGRESS",
+    "startedAt": "2024-01-15T10:17:00.000Z"
+  }
+}
+```
+
+**Error Responses**
+
+| Status | Message                                                                                  |
+| ------ | ---------------------------------------------------------------------------------------- |
+| `400`  | Cannot start consultation: entry must be IN_PROGRESS (current: …)                        |
+| `401`  | Unauthorized                                                                             |
+| `403`  | Insufficient role                                                                        |
+| `404`  | Queue entry not found                                                                    |
+| `409`  | Consultation has already been started for this queue entry                               |
 
 ---
 
@@ -2955,6 +3197,9 @@ Authorization: Bearer <accessToken>
       "sunday": { "open": "09:00", "close": "14:00", "isOpen": false }
     },
     "maxPatientsPerDay": 50,
+    "appointmentDuration": 30,
+    "gracePeriod": 15,
+    "delayThreshold": 20,
     "createdAt": "2024-01-01T00:00:00.000Z",
     "updatedAt": "2024-01-15T10:00:00.000Z",
     "clinic": {
@@ -3005,6 +3250,9 @@ Content-Type: application/json
   "email": "info@alshifa.com",
   "address": "Cairo, Egypt",
   "maxPatientsPerDay": 60,
+  "appointmentDuration": 30,
+  "gracePeriod": 15,
+  "delayThreshold": 20,
   "workingHours": {
     "monday": { "open": "08:00", "close": "18:00", "isOpen": true },
     "tuesday": { "open": "08:00", "close": "18:00", "isOpen": true },
@@ -3019,14 +3267,17 @@ Content-Type: application/json
 
 **Validation Rules**
 
-| Field             | Type    | Required | Rules                                                                      |
-| ----------------- | ------- | -------- | -------------------------------------------------------------------------- |
-| name              | string  | No       | Min 2, max 100 characters                                                  |
-| phone             | string  | No       | Min 7, max 20 chars, valid phone format, nullable                          |
-| email             | string  | No       | Valid email format, max 100 chars, nullable                                |
-| address           | string  | No       | Min 1, max 255 characters, nullable                                        |
-| maxPatientsPerDay | integer | No       | Min 1, max 1000                                                            |
-| workingHours      | object  | No       | Must include all 7 days with open (HH:MM), close (HH:MM), isOpen (boolean) |
+| Field               | Type    | Required | Rules                                                                      |
+| ------------------- | ------- | -------- | -------------------------------------------------------------------------- |
+| name                | string  | No       | Min 2, max 100 characters                                                  |
+| phone               | string  | No       | Min 7, max 20 chars, valid phone format, nullable                          |
+| email               | string  | No       | Valid email format, max 100 chars, nullable                                |
+| address             | string  | No       | Min 1, max 255 characters, nullable                                        |
+| maxPatientsPerDay   | integer | No       | Min 1, max 1000                                                            |
+| appointmentDuration | integer | No       | Duration of each appointment slot in minutes. Default: `30`                |
+| gracePeriod         | integer | No       | Late-arrival grace period in minutes. Default: `15`                        |
+| delayThreshold      | integer | No       | Threshold in minutes before a delay is flagged. Default: `20`              |
+| workingHours        | object  | No       | Must include all 7 days with open (HH:MM), close (HH:MM), isOpen (boolean) |
 
 **workingHours Day Object**
 
@@ -3057,6 +3308,9 @@ Content-Type: application/json
       "sunday": { "open": "09:00", "close": "14:00", "isOpen": false }
     },
     "maxPatientsPerDay": 60,
+    "appointmentDuration": 30,
+    "gracePeriod": 15,
+    "delayThreshold": 20,
     "createdAt": "2024-01-01T00:00:00.000Z",
     "updatedAt": "2024-01-15T11:00:00.000Z",
     "clinic": {
@@ -3126,17 +3380,18 @@ Content-Type: application/json
 | 31  | GET    | `/api/v1/queue/statistics`           | Yes  | DOCTOR, RECEPTIONIST |
 | 32  | GET    | `/api/v1/queue/:id`                  | Yes  | DOCTOR, RECEPTIONIST |
 | 33  | PATCH  | `/api/v1/queue/:id/serve`            | Yes  | DOCTOR, RECEPTIONIST |
-| 34  | PATCH  | `/api/v1/queue/:id/skip`             | Yes  | DOCTOR, RECEPTIONIST |
-| 35  | PATCH  | `/api/v1/queue/:id/recall`           | Yes  | DOCTOR, RECEPTIONIST |
-| 36  | PATCH  | `/api/v1/queue/:id/cancel`           | Yes  | DOCTOR, RECEPTIONIST |
-| 37  | GET    | `/api/v1/dashboard/overview`         | Yes  | DOCTOR, RECEPTIONIST |
-| 38  | GET    | `/api/v1/dashboard/today`            | Yes  | DOCTOR, RECEPTIONIST |
-| 39  | GET    | `/api/v1/dashboard/queue`            | Yes  | DOCTOR, RECEPTIONIST |
-| 40  | GET    | `/api/v1/dashboard/appointments`     | Yes  | DOCTOR, RECEPTIONIST |
-| 41  | GET    | `/api/v1/dashboard/patients`         | Yes  | DOCTOR, RECEPTIONIST |
-| 42  | GET    | `/api/v1/dashboard/analytics`        | Yes  | DOCTOR, RECEPTIONIST |
-| 43  | GET    | `/api/v1/clinic-settings`            | Yes  | DOCTOR, RECEPTIONIST |
-| 44  | PATCH  | `/api/v1/clinic-settings`            | Yes  | DOCTOR, RECEPTIONIST |
+| 34  | PATCH  | `/api/v1/queue/:id/start`            | Yes  | DOCTOR, RECEPTIONIST |
+| 35  | PATCH  | `/api/v1/queue/:id/skip`             | Yes  | DOCTOR, RECEPTIONIST |
+| 36  | PATCH  | `/api/v1/queue/:id/recall`           | Yes  | DOCTOR, RECEPTIONIST |
+| 37  | PATCH  | `/api/v1/queue/:id/cancel`           | Yes  | DOCTOR, RECEPTIONIST |
+| 38  | GET    | `/api/v1/dashboard/overview`         | Yes  | DOCTOR, RECEPTIONIST |
+| 39  | GET    | `/api/v1/dashboard/today`            | Yes  | DOCTOR, RECEPTIONIST |
+| 40  | GET    | `/api/v1/dashboard/queue`            | Yes  | DOCTOR, RECEPTIONIST |
+| 41  | GET    | `/api/v1/dashboard/appointments`     | Yes  | DOCTOR, RECEPTIONIST |
+| 42  | GET    | `/api/v1/dashboard/patients`         | Yes  | DOCTOR, RECEPTIONIST |
+| 43  | GET    | `/api/v1/dashboard/analytics`        | Yes  | DOCTOR, RECEPTIONIST |
+| 44  | GET    | `/api/v1/clinic-settings`            | Yes  | DOCTOR, RECEPTIONIST |
+| 45  | PATCH  | `/api/v1/clinic-settings`            | Yes  | DOCTOR, RECEPTIONIST |
 
 ---
 
@@ -3218,7 +3473,12 @@ localStorage.removeItem("refreshToken");
 
 export type Role = "DOCTOR" | "RECEPTIONIST";
 export type Gender = "MALE" | "FEMALE" | "OTHER";
-export type AppointmentStatus = "SCHEDULED" | "COMPLETED" | "CANCELLED";
+export type AppointmentStatus =
+  | "SCHEDULED"
+  | "CONFIRMED"
+  | "COMPLETED"
+  | "CANCELLED"
+  | "NO_SHOW";
 export type QueueStatus = "WAITING" | "IN_PROGRESS" | "SERVED" | "CANCELLED";
 ```
 
