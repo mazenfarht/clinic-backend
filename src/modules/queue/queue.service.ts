@@ -78,8 +78,13 @@ function getTodayDate(): Date {
 
 function parseDateFilter(date?: string): Date {
   if (!date) return getTodayDate();
+
   const parsed = new Date(`${date}T00:00:00.000Z`);
-  if (isNaN(parsed.getTime())) throw new BadRequestError("Invalid date format");
+
+  if (isNaN(parsed.getTime())) {
+    throw new BadRequestError("Invalid date format");
+  }
+
   return parsed;
 }
 
@@ -88,6 +93,7 @@ function assertStatusTransition(
   target: QueueStatus
 ): void {
   const allowed = QUEUE_STATUS_TRANSITIONS[current];
+
   if (!allowed.includes(target)) {
     throw new BadRequestError(
       `Cannot transition queue entry from "${current}" to "${target}"`
@@ -106,7 +112,12 @@ async function findEntryOrThrow(
 }> {
   const entry = await prisma.queueEntry.findFirst({
     where: { id, clinicId },
-    select: { id: true, status: true, visitId: true, startedAt: true },
+    select: {
+      id: true,
+      status: true,
+      visitId: true,
+      startedAt: true,
+    },
   });
 
   if (!entry) {
@@ -128,7 +139,355 @@ async function generateQueueNumber(
   });
 
   const lastNumber = lastEntry?.queueNumber ?? 0;
+
   return lastNumber + 1;
+}
+
+// ---------------------------------------------------------------------------
+// Queue priority helpers
+// ---------------------------------------------------------------------------
+
+function getTimeOfDay(date: Date): number {
+  return (
+    date.getUTCHours() * 60 * 60 * 1000 +
+    date.getUTCMinutes() * 60 * 1000 +
+    date.getUTCSeconds() * 1000 +
+    date.getUTCMilliseconds()
+  );
+}
+
+function getAppointmentTimeOfDay(date: Date): number {
+  return (
+    date.getUTCHours() * 60 * 60 * 1000 +
+    date.getUTCMinutes() * 60 * 1000 +
+    date.getUTCSeconds() * 1000 +
+    date.getUTCMilliseconds()
+  );
+}
+
+type QueuePriorityEntry = {
+  id: string;
+  queueNumber: number;
+  checkedInAt: Date | null;
+  appointmentTime: Date | null;
+};
+
+type QueueCandidate = QueuePriorityEntry & {
+  effectiveTime: number;
+  isLate: boolean;
+};
+
+/**
+ * Selects the next WAITING patient according to the clinic queue rule.
+ *
+ * Rules:
+ *
+ * 1. Patients are naturally ordered by appointment time.
+ *
+ * 2. A patient is LATE when:
+ *      checkedInAt > appointmentTime
+ *
+ * 3. A late patient must wait for up to 3 patients whose appointment
+ *    times are later than theirs AND who have already checked in.
+ *
+ * 4. A later patient counts immediately when checkedInAt is not null.
+ *    Their current status is irrelevant:
+ *
+ *      WAITING     -> counts
+ *      IN_PROGRESS -> counts
+ *      SERVED      -> counts
+ *
+ * 5. If only 1 or 2 later patients have checked in, the late patient
+ *    waits for only those 1 or 2.
+ *
+ * 6. If 3 or more later patients have checked in, the late patient
+ *    waits for the first 3 by appointment time.
+ *
+ * 7. Patients who have not checked in NEVER count toward the 3.
+ *
+ * 8. calledAt / startedAt / servedAt are intentionally NOT used.
+ */
+async function selectNextWaiting(
+  client: Prisma.TransactionClient | typeof prisma,
+  clinicId: string,
+  queueDate: Date
+): Promise<string | null> {
+  // -------------------------------------------------------------------------
+  // Fetch all WAITING candidates.
+  //
+  // Only WAITING entries can actually be called next.
+  // -------------------------------------------------------------------------
+
+  const waitingEntries = await client.queueEntry.findMany({
+    where: {
+      clinicId,
+      queueDate,
+      status: "WAITING",
+    },
+    select: {
+      id: true,
+      queueNumber: true,
+      checkedInAt: true,
+      visit: {
+        select: {
+          appointment: {
+            select: {
+              appointmentTime: true,
+            },
+          },
+        },
+      },
+    },
+  });
+
+  if (waitingEntries.length === 0) {
+    return null;
+  }
+
+  // -------------------------------------------------------------------------
+  // Fetch ALL today's checked-in patients.
+  //
+  // IMPORTANT:
+  // Status is deliberately NOT filtered.
+  //
+  // A patient counts toward the "3" immediately after check-in.
+  // It doesn't matter if they are:
+  //
+  // WAITING
+  // IN_PROGRESS
+  // SERVED
+  //
+  // calledAt / startedAt / servedAt are intentionally ignored.
+  // -------------------------------------------------------------------------
+
+  const checkedInEntries = await client.queueEntry.findMany({
+    where: {
+      clinicId,
+      queueDate,
+      checkedInAt: {
+        not: null,
+      },
+    },
+    select: {
+      id: true,
+      queueNumber: true,
+      checkedInAt: true,
+      visit: {
+        select: {
+          appointment: {
+            select: {
+              appointmentTime: true,
+            },
+          },
+        },
+      },
+    },
+  });
+
+  // -------------------------------------------------------------------------
+  // Normalize appointment data.
+  // -------------------------------------------------------------------------
+
+  const allCheckedIn: QueuePriorityEntry[] = checkedInEntries
+    .map((entry) => ({
+      id: entry.id,
+      queueNumber: entry.queueNumber,
+      checkedInAt: entry.checkedInAt,
+      appointmentTime: entry.visit?.appointment?.appointmentTime ?? null,
+    }))
+    .filter(
+      (
+        entry
+      ): entry is QueuePriorityEntry & {
+        checkedInAt: Date;
+        appointmentTime: Date;
+      } => entry.checkedInAt !== null && entry.appointmentTime !== null
+    );
+
+  // -------------------------------------------------------------------------
+  // Build effective position for every WAITING candidate.
+  // -------------------------------------------------------------------------
+
+  const candidates: QueueCandidate[] = waitingEntries.map((entry) => {
+    const appointmentTime = entry.visit?.appointment?.appointmentTime ?? null;
+
+    // -----------------------------------------------------------------------
+    // Safety fallback for data that has no appointment.
+    //
+    // The requested queue rule is appointment-based.
+    // If malformed / unexpected data has no appointment, put it last.
+    // -----------------------------------------------------------------------
+
+    if (!appointmentTime) {
+      return {
+        id: entry.id,
+        queueNumber: entry.queueNumber,
+        checkedInAt: entry.checkedInAt,
+        appointmentTime: null,
+        effectiveTime: Number.MAX_SAFE_INTEGER,
+        isLate: false,
+      };
+    }
+
+    // -----------------------------------------------------------------------
+    // Reserved / unchecked-in entries.
+    //
+    // They have no checkedInAt, so they are NOT late.
+    // They remain in normal appointment order.
+    // -----------------------------------------------------------------------
+
+    if (!entry.checkedInAt) {
+      return {
+        id: entry.id,
+        queueNumber: entry.queueNumber,
+        checkedInAt: null,
+        appointmentTime,
+        effectiveTime: getAppointmentTimeOfDay(appointmentTime),
+        isLate: false,
+      };
+    }
+
+    const checkedInTime = getTimeOfDay(entry.checkedInAt);
+    const appointmentTimeValue = getAppointmentTimeOfDay(appointmentTime);
+
+    const isLate = checkedInTime > appointmentTimeValue;
+
+    // -----------------------------------------------------------------------
+    // On-time patient.
+    //
+    // Normal appointment ordering.
+    // -----------------------------------------------------------------------
+
+    if (!isLate) {
+      return {
+        id: entry.id,
+        queueNumber: entry.queueNumber,
+        checkedInAt: entry.checkedInAt,
+        appointmentTime,
+        effectiveTime: appointmentTimeValue,
+        isLate: false,
+      };
+    }
+
+    // -----------------------------------------------------------------------
+    // LATE PATIENT
+    //
+    // Find later appointment patients who have already checked in.
+    //
+    // IMPORTANT:
+    // We DO NOT check their status.
+    //
+    // The only condition is:
+    //
+    // appointmentTime > late patient's appointmentTime
+    // AND
+    // checkedInAt IS NOT NULL
+    // -----------------------------------------------------------------------
+
+    const laterCheckedIn = allCheckedIn
+      .filter((other) => {
+        if (other.id === entry.id) {
+          return false;
+        }
+
+        if (!other.appointmentTime) {
+          return false;
+        }
+
+        return (
+          getAppointmentTimeOfDay(other.appointmentTime) > appointmentTimeValue
+        );
+      })
+      .sort((a, b) => {
+        const timeA = getAppointmentTimeOfDay(a.appointmentTime);
+        const timeB = getAppointmentTimeOfDay(b.appointmentTime);
+
+        if (timeA !== timeB) {
+          return timeA - timeB;
+        }
+
+        return a.queueNumber - b.queueNumber;
+      });
+
+    // -----------------------------------------------------------------------
+    // Wait for up to 3 later checked-in patients.
+    //
+    // 0 later patients  -> enters immediately
+    // 1 later patient   -> waits for 1
+    // 2 later patients  -> waits for 2
+    // 3+ later patients -> waits for exactly 3
+    // -----------------------------------------------------------------------
+
+    const numberToWait = Math.min(3, laterCheckedIn.length);
+
+    // -----------------------------------------------------------------------
+    // No later checked-in patients.
+    //
+    // The late patient has nobody to wait for.
+    // They are immediately eligible.
+    // -----------------------------------------------------------------------
+
+    if (numberToWait === 0) {
+      return {
+        id: entry.id,
+        queueNumber: entry.queueNumber,
+        checkedInAt: entry.checkedInAt,
+        appointmentTime,
+        effectiveTime: appointmentTimeValue,
+        isLate: true,
+      };
+    }
+
+    // -----------------------------------------------------------------------
+    // The late patient must be positioned after the Nth later checked-in
+    // patient.
+    //
+    // Example:
+    //
+    // A = 09:00 late
+    // B = 09:30 checked in
+    // C = 10:00 checked in
+    // D = 10:30 checked in
+    //
+    // A waits for B, C, D.
+    // Therefore A's effective position is AFTER D.
+    //
+    // We use a fractional position immediately after the cutoff
+    // appointment time so another patient with exactly the cutoff
+    // appointment time remains before the late patient.
+    // -----------------------------------------------------------------------
+
+    const cutoffPatient = laterCheckedIn[numberToWait - 1];
+
+    const cutoffTime = getAppointmentTimeOfDay(cutoffPatient.appointmentTime);
+
+    return {
+      id: entry.id,
+      queueNumber: entry.queueNumber,
+      checkedInAt: entry.checkedInAt,
+      appointmentTime,
+      effectiveTime: cutoffTime + 0.5,
+      isLate: true,
+    };
+  });
+
+  // -------------------------------------------------------------------------
+  // Sort candidates.
+  //
+  // effectiveTime determines the patient's position in the queue.
+  //
+  // queueNumber is the final tie-breaker.
+  // -------------------------------------------------------------------------
+
+  candidates.sort((a, b) => {
+    if (a.effectiveTime !== b.effectiveTime) {
+      return a.effectiveTime - b.effectiveTime;
+    }
+
+    return a.queueNumber - b.queueNumber;
+  });
+
+  return candidates[0]?.id ?? null;
 }
 
 // ---------------------------------------------------------------------------
@@ -143,7 +502,11 @@ export async function checkIn(
   const queueDate = getTodayDate();
 
   const patient = await prisma.patient.findFirst({
-    where: { id: input.patientId, clinicId, deletedAt: null },
+    where: {
+      id: input.patientId,
+      clinicId,
+      deletedAt: null,
+    },
     select: { id: true },
   });
 
@@ -162,7 +525,10 @@ export async function checkIn(
         },
         appointmentDate: queueDate,
       },
-      select: { id: true, visitId: true },
+      select: {
+        id: true,
+        visitId: true,
+      },
     });
 
     if (!appointment) {
@@ -182,8 +548,12 @@ export async function checkIn(
         where: {
           clinicId,
           queueDate,
-          status: { in: ["WAITING", "IN_PROGRESS"] },
-          visit: { patientId: input.patientId },
+          status: {
+            in: ["WAITING", "IN_PROGRESS"],
+          },
+          visit: {
+            patientId: input.patientId,
+          },
         },
         select: { id: true },
       });
@@ -248,6 +618,7 @@ export async function checkIn(
         "Patient already has an active queue entry for today"
       );
     }
+
     throw err;
   }
 }
@@ -264,7 +635,11 @@ export async function reserveSlot(
   const queueDate = getTodayDate();
 
   const existing = await prisma.queueEntry.findFirst({
-    where: { clinicId, queueDate, queueNumber: input.queueNumber },
+    where: {
+      clinicId,
+      queueDate,
+      queueNumber: input.queueNumber,
+    },
     select: { id: true },
   });
 
@@ -336,11 +711,16 @@ export async function getQueueEntryById(
   clinicId: string
 ): Promise<QueueEntrySummary> {
   const entry = await prisma.queueEntry.findFirst({
-    where: { id, clinicId },
+    where: {
+      id,
+      clinicId,
+    },
     select: queueEntrySummarySelect,
   });
 
-  if (!entry) throw new NotFoundError("Queue entry not found");
+  if (!entry) {
+    throw new NotFoundError("Queue entry not found");
+  }
 
   return entry as QueueEntrySummary;
 }
@@ -357,8 +737,15 @@ export async function callNext(
 
   const entry = await prisma.$transaction(async (tx) => {
     const inProgress = await tx.queueEntry.findFirst({
-      where: { clinicId, queueDate, status: "IN_PROGRESS" },
-      select: { id: true, queueNumber: true },
+      where: {
+        clinicId,
+        queueDate,
+        status: "IN_PROGRESS",
+      },
+      select: {
+        id: true,
+        queueNumber: true,
+      },
     });
 
     if (inProgress) {
@@ -367,18 +754,24 @@ export async function callNext(
       );
     }
 
-    const next = await tx.queueEntry.findFirst({
-      where: { clinicId, queueDate, status: "WAITING" },
-      orderBy: { queueNumber: "asc" },
-      select: { id: true },
-    });
+    // -----------------------------------------------------------------------
+    // IMPORTANT:
+    // The next patient is selected exclusively by the shared priority
+    // algorithm.
+    // -----------------------------------------------------------------------
 
-    if (!next) {
+    const nextId = await selectNextWaiting(tx, clinicId, queueDate);
+
+    if (!nextId) {
       throw new NotFoundError("No waiting patients in the queue");
     }
 
     const result = await tx.queueEntry.updateMany({
-      where: { id: next.id, clinicId, status: "WAITING" },
+      where: {
+        id: nextId,
+        clinicId,
+        status: "WAITING",
+      },
       data: {
         status: "IN_PROGRESS",
         calledAt: new Date(),
@@ -393,11 +786,17 @@ export async function callNext(
     }
 
     const updated = await tx.queueEntry.findFirst({
-      where: { id: next.id, clinicId },
+      where: {
+        id: nextId,
+        clinicId,
+      },
       select: queueEntrySummarySelect,
     });
 
-    if (!updated) throw new NotFoundError("Queue entry not found after update");
+    if (!updated) {
+      throw new NotFoundError("Queue entry not found after update");
+    }
+
     return updated;
   });
 
@@ -442,7 +841,9 @@ export async function startConsultation(
     if (existing.visitId) {
       await tx.visit.update({
         where: { id: existing.visitId },
-        data: { startedAt: now },
+        data: {
+          startedAt: now,
+        },
       });
     }
 
@@ -481,7 +882,9 @@ export async function markServed(
     if (existing.visitId) {
       await tx.visit.update({
         where: { id: existing.visitId },
-        data: { completedAt: now },
+        data: {
+          completedAt: now,
+        },
       });
     }
 
@@ -539,7 +942,10 @@ export async function recallPatient(
       queueDate: getTodayDate(),
       status: "IN_PROGRESS",
     },
-    select: { id: true, queueNumber: true },
+    select: {
+      id: true,
+      queueNumber: true,
+    },
   });
 
   if (inProgress) {
@@ -613,29 +1019,63 @@ export async function getQueueStatus(
 ): Promise<QueueStatus_Current> {
   const queueDate = getTodayDate();
 
+  // -------------------------------------------------------------------------
+  // Use the exact same selector used by callNext().
+  //
+  // This guarantees nextWaiting and callNext cannot use different
+  // priority rules.
+  // -------------------------------------------------------------------------
+
+  const nextWaitingId = await selectNextWaiting(prisma, clinicId, queueDate);
+
   const [currentlyServing, nextWaiting, waitingCount, servedCount] =
     await prisma.$transaction([
       prisma.queueEntry.findFirst({
-        where: { clinicId, queueDate, status: "IN_PROGRESS" },
+        where: {
+          clinicId,
+          queueDate,
+          status: "IN_PROGRESS",
+        },
         select: queueEntrySummarySelect,
-        orderBy: { calledAt: "desc" },
+        orderBy: {
+          calledAt: "desc",
+        },
       }),
-      prisma.queueEntry.findFirst({
-        where: { clinicId, queueDate, status: "WAITING" },
-        select: queueEntrySummarySelect,
-        orderBy: { queueNumber: "asc" },
-      }),
+
+      nextWaitingId
+        ? prisma.queueEntry.findFirst({
+            where: {
+              id: nextWaitingId,
+              clinicId,
+              queueDate,
+              status: "WAITING",
+            },
+            select: queueEntrySummarySelect,
+          })
+        : Promise.resolve(null),
+
       prisma.queueEntry.count({
-        where: { clinicId, queueDate, status: "WAITING" },
+        where: {
+          clinicId,
+          queueDate,
+          status: "WAITING",
+        },
       }),
+
       prisma.queueEntry.count({
-        where: { clinicId, queueDate, status: "SERVED" },
+        where: {
+          clinicId,
+          queueDate,
+          status: "SERVED",
+        },
       }),
     ]);
 
   return {
     currentlyServing: currentlyServing as QueueEntrySummary | null,
+
     nextWaiting: nextWaiting as QueueEntrySummary | null,
+
     waitingCount,
     servedCount,
   };
@@ -653,29 +1093,63 @@ export async function getQueueStatistics(
 
   const [total, waiting, inProgress, served, cancelled, servedEntries] =
     await prisma.$transaction([
-      prisma.queueEntry.count({ where: { clinicId, queueDate } }),
       prisma.queueEntry.count({
-        where: { clinicId, queueDate, status: "WAITING" },
+        where: {
+          clinicId,
+          queueDate,
+        },
       }),
+
       prisma.queueEntry.count({
-        where: { clinicId, queueDate, status: "IN_PROGRESS" },
+        where: {
+          clinicId,
+          queueDate,
+          status: "WAITING",
+        },
       }),
+
       prisma.queueEntry.count({
-        where: { clinicId, queueDate, status: "SERVED" },
+        where: {
+          clinicId,
+          queueDate,
+          status: "IN_PROGRESS",
+        },
       }),
+
       prisma.queueEntry.count({
-        where: { clinicId, queueDate, status: "CANCELLED" },
+        where: {
+          clinicId,
+          queueDate,
+          status: "SERVED",
+        },
       }),
+
+      prisma.queueEntry.count({
+        where: {
+          clinicId,
+          queueDate,
+          status: "CANCELLED",
+        },
+      }),
+
       prisma.queueEntry.findMany({
         where: {
           clinicId,
           queueDate,
           status: "SERVED",
           isReserved: false,
-          checkedInAt: { not: null },
-          calledAt: { not: null },
-          startedAt: { not: null },
-          servedAt: { not: null },
+          checkedInAt: {
+            not: null,
+          },
+          calledAt: {
+            not: null,
+          },
+          startedAt: {
+            not: null,
+          },
+          servedAt: {
+            not: null,
+          },
         },
         select: {
           checkedInAt: true,
@@ -741,7 +1215,9 @@ export async function resetQueue(
     where: {
       clinicId,
       queueDate,
-      status: { in: ["WAITING", "IN_PROGRESS"] },
+      status: {
+        in: ["WAITING", "IN_PROGRESS"],
+      },
     },
     data: {
       status: "CANCELLED",
@@ -749,5 +1225,7 @@ export async function resetQueue(
     },
   });
 
-  return { cancelled: result.count };
+  return {
+    cancelled: result.count,
+  };
 }
