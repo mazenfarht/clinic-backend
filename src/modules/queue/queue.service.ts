@@ -1019,16 +1019,11 @@ export async function getQueueStatus(
 ): Promise<QueueStatus_Current> {
   const queueDate = getTodayDate();
 
-  // -------------------------------------------------------------------------
-  // Use the exact same selector used by callNext().
-  //
-  // This guarantees nextWaiting and callNext cannot use different
-  // priority rules.
-  // -------------------------------------------------------------------------
-
+  // Use the same priority selector as callNext()
   const nextWaitingId = await selectNextWaiting(prisma, clinicId, queueDate);
 
-  const [currentlyServing, nextWaiting, waitingCount, servedCount] =
+  // Always execute valid Prisma queries inside $transaction
+  const [currentlyServing, waitingCount, servedCount] =
     await prisma.$transaction([
       prisma.queueEntry.findFirst({
         where: {
@@ -1041,18 +1036,6 @@ export async function getQueueStatus(
           calledAt: "desc",
         },
       }),
-
-      nextWaitingId
-        ? prisma.queueEntry.findFirst({
-            where: {
-              id: nextWaitingId,
-              clinicId,
-              queueDate,
-              status: "WAITING",
-            },
-            select: queueEntrySummarySelect,
-          })
-        : Promise.resolve(null),
 
       prisma.queueEntry.count({
         where: {
@@ -1071,11 +1054,22 @@ export async function getQueueStatus(
       }),
     ]);
 
+  // This query is optional, so execute it separately.
+  const nextWaiting = nextWaitingId
+    ? await prisma.queueEntry.findFirst({
+        where: {
+          id: nextWaitingId,
+          clinicId,
+          queueDate,
+          status: "WAITING",
+        },
+        select: queueEntrySummarySelect,
+      })
+    : null;
+
   return {
     currentlyServing: currentlyServing as QueueEntrySummary | null,
-
     nextWaiting: nextWaiting as QueueEntrySummary | null,
-
     waitingCount,
     servedCount,
   };
