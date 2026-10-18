@@ -45,6 +45,7 @@ model Clinic {
 
   settings     ClinicSettings?
   users        User[]
+  doctors      Doctor[]
   patients     Patient[]
   appointments Appointment[]
   visits       Visit[]
@@ -81,7 +82,8 @@ model User {
   createdAt    DateTime  @default(now())
   updatedAt    DateTime  @updatedAt
 
-  clinic Clinic @relation(fields: [clinicId], references: [id], onDelete: Cascade)
+  clinic Clinic  @relation(fields: [clinicId], references: [id], onDelete: Cascade)
+  doctor Doctor?
 
   patientsCreated     Patient[]     @relation("PatientCreatedBy")
   patientsUpdated     Patient[]     @relation("PatientUpdatedBy")
@@ -95,6 +97,28 @@ model User {
   @@unique([clinicId, email])
   @@index([clinicId])
   @@map("users")
+}
+
+model Doctor {
+  id                  String   @id @default(uuid())
+  clinicId            String
+  userId              String   @unique
+  specialty           String
+  bio                 String?
+  // Optional per-doctor overrides — fall back to ClinicSettings when null
+  appointmentDuration Int?
+  workingHours        Json?
+  // false = hidden from online booking (staff can still book)
+  isBookable          Boolean  @default(true)
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+
+  clinic       Clinic        @relation(fields: [clinicId], references: [id], onDelete: Cascade)
+  user         User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  appointments Appointment[]
+
+  @@index([clinicId, isBookable])
+  @@map("doctors")
 }
 
 model Patient {
@@ -130,6 +154,8 @@ model Appointment {
   id              String            @id @default(uuid())
   clinicId        String
   patientId       String
+  // Nullable only for legacy rows; every new appointment requires a doctor
+  doctorId        String?
   createdById     String?
   updatedById     String?
   visitId         String?           @unique
@@ -142,13 +168,16 @@ model Appointment {
 
   clinic    Clinic  @relation(fields: [clinicId], references: [id], onDelete: Cascade)
   patient   Patient @relation(fields: [patientId], references: [id], onDelete: Restrict)
+  doctor    Doctor? @relation(fields: [doctorId], references: [id], onDelete: Restrict)
   createdBy User?   @relation("AppointmentCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
   updatedBy User?   @relation("AppointmentUpdatedBy", fields: [updatedById], references: [id], onDelete: SetNull)
   visit     Visit?  @relation(fields: [visitId], references: [id], onDelete: SetNull)
 
 // NOTE: The uniqueness constraint for active appointments (SCHEDULED, CONFIRMED)
-// is enforced by a partial unique index managed manually in migrations.
-// Do NOT add @@unique([clinicId, appointmentDate, appointmentTime]) here.
+// is enforced per DOCTOR by a partial unique index managed manually in migrations:
+//   (doctorId, appointmentDate, appointmentTime) WHERE status IN (...)
+// Do NOT add a Prisma @@unique for it here.
+  @@index([doctorId, appointmentDate])
   @@index([clinicId, appointmentDate, appointmentTime])
   @@index([clinicId, appointmentDate])
   @@index([patientId, appointmentDate])

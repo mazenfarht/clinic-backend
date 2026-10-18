@@ -14,7 +14,7 @@ const workingHoursDaySchema = z.object({
   isOpen: z.boolean(),
 });
 
-const workingHoursSchema = z.object({
+export const workingHoursSchema = z.object({
   monday: workingHoursDaySchema,
   tuesday: workingHoursDaySchema,
   wednesday: workingHoursDaySchema,

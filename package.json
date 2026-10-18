@@ -1,18 +1,22 @@
 {
   "name": "backend",
   "version": "1.0.0",
-  "description": "> **Stack:** Next.js 15 App Router · TypeScript · In-Memory Storage · JWT Auth (Web Crypto API)",
-  "main": "index.js",
+  "description": "Clinic management backend: patients, appointments, online booking, queue, visits (Express + Prisma + PostgreSQL)",
+  "main": "dist/server.js",
   "directories": {
     "test": "tests"
   },
   "scripts": {
     "dev": "tsx watch src/server.ts",
-    "build": "tsc",
+    "build": "prisma generate && tsc",
     "start": "node dist/server.js",
     "prisma:generate": "prisma generate",
     "prisma:migrate": "prisma migrate dev",
-    "prisma:studio": "prisma studio"
+    "prisma:studio": "prisma studio",
+    "postinstall": "prisma generate",
+    "typecheck": "tsc --noEmit",
+    "prisma:deploy": "prisma migrate deploy",
+    "seed": "tsx prisma/seed.ts"
   },
   "keywords": [],
   "author": "",
@@ -46,5 +50,8 @@
     "winston": "^3.19.0",
     "winston-daily-rotate-file": "^5.0.0",
     "zod": "^4.4.3"
+  },
+  "prisma": {
+    "seed": "tsx prisma/seed.ts"
   }
 }

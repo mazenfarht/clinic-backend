@@ -8,6 +8,7 @@ export const clinicIdParamSchema = z.object({
 });
 
 export const availabilityQuerySchema = z.object({
+  doctorId: z.string().uuid("Invalid doctor ID format"),
   date: z
     .string()
     .trim()
@@ -60,6 +61,8 @@ export const publicRegisterPatientSchema = z.object({
 
 export const publicBookAppointmentSchema = z.object({
   patientId: z.string().uuid("Invalid patient ID format"),
+
+  doctorId: z.string().uuid("Invalid doctor ID format"),
 
   appointmentDate: z
     .string()

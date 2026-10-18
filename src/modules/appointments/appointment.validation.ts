@@ -25,6 +25,7 @@ const appointmentTimeSchema = z
 
 export const createAppointmentSchema = z.object({
   patientId: z.string().uuid("Invalid patient ID format"),
+  doctorId: z.string().uuid("Invalid doctor ID format"),
   appointmentDate: appointmentDateSchema,
   appointmentTime: appointmentTimeSchema,
   notes: z
@@ -36,6 +37,7 @@ export const createAppointmentSchema = z.object({
 
 export const updateAppointmentSchema = z
   .object({
+    doctorId: z.string().uuid("Invalid doctor ID format").optional(),
     appointmentDate: appointmentDateSchema.optional(),
     appointmentTime: appointmentTimeSchema.optional(),
     notes: z
@@ -57,6 +59,7 @@ export const appointmentQuerySchema = z.object({
     .optional(),
   status: z.nativeEnum(AppointmentStatus).optional(),
   patientId: z.string().uuid("Invalid patient ID format").optional(),
+  doctorId: z.string().uuid("Invalid doctor ID format").optional(),
   date: z
     .string()
     .trim()

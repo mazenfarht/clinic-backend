@@ -37,6 +37,11 @@ None
   "email": "admin@clinic.com",
   "password": "Mazen@1710"
 }
+{
+  "email": "Receptionist@clinic.com",
+  "password": "Receptionist@1710"
+}
+
 ```
 
 Admin

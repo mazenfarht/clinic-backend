@@ -71,7 +71,14 @@ function buildConfig() {
     }),
 
     cors: Object.freeze({
-      origin: optionalEnv("CORS_ORIGIN", "http://localhost:3000"),
+      origin: optionalEnv("CORS_ORIGIN", "http://localhost:3000")
+        .split(",")
+        .map((o) => o.trim())
+        .filter(Boolean),
+    }),
+
+    clinic: Object.freeze({
+      timezone: optionalEnv("CLINIC_TIMEZONE", "Africa/Cairo"),
     }),
 
     logs: Object.freeze({

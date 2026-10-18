@@ -19,9 +19,13 @@ import {
 export const getAvailability = asyncHandler(
   async (req: Request, res: Response) => {
     const { clinicId } = clinicIdParamSchema.parse(req.params);
-    const { date } = availabilityQuerySchema.parse(req.query);
+    const { doctorId, date } = availabilityQuerySchema.parse(req.query);
 
-    const result = await PublicService.getAvailability(clinicId, date);
+    const result = await PublicService.getAvailability(
+      clinicId,
+      doctorId,
+      date
+    );
 
     ApiResponse.ok(res, result, "Availability retrieved successfully");
   }
@@ -71,3 +75,13 @@ export const bookAppointment = asyncHandler(
     ApiResponse.created(res, result, "Appointment booked successfully");
   }
 );
+
+// ---------------------------------------------------------------------------
+// GET /public/clinics/:clinicId/doctors
+// ---------------------------------------------------------------------------
+
+export const listDoctors = asyncHandler(async (req: Request, res: Response) => {
+  const { clinicId } = clinicIdParamSchema.parse(req.params);
+  const doctors = await PublicService.listBookableDoctors(clinicId);
+  ApiResponse.ok(res, doctors, "Doctors retrieved successfully");
+});

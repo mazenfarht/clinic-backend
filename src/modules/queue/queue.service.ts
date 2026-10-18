@@ -177,6 +177,12 @@ type QueueCandidate = QueuePriorityEntry & {
   isLate: boolean;
 };
 
+// A checked-in entry that is guaranteed to have both timestamps.
+type CheckedInEntry = QueuePriorityEntry & {
+  checkedInAt: Date;
+  appointmentTime: Date;
+};
+
 /**
  * Selects the next WAITING patient according to the clinic queue rule.
  *
@@ -288,7 +294,7 @@ async function selectNextWaiting(
   // Normalize appointment data.
   // -------------------------------------------------------------------------
 
-  const allCheckedIn: QueuePriorityEntry[] = checkedInEntries
+  const allCheckedIn: CheckedInEntry[] = checkedInEntries
     .map((entry) => ({
       id: entry.id,
       queueNumber: entry.queueNumber,
@@ -296,12 +302,8 @@ async function selectNextWaiting(
       appointmentTime: entry.visit?.appointment?.appointmentTime ?? null,
     }))
     .filter(
-      (
-        entry
-      ): entry is QueuePriorityEntry & {
-        checkedInAt: Date;
-        appointmentTime: Date;
-      } => entry.checkedInAt !== null && entry.appointmentTime !== null
+      (entry): entry is CheckedInEntry =>
+        entry.checkedInAt !== null && entry.appointmentTime !== null
     );
 
   // -------------------------------------------------------------------------
