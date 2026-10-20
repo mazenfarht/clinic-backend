@@ -17,6 +17,7 @@ const clinicSettingsSelect = {
   appointmentDuration: true,
   gracePeriod: true,
   delayThreshold: true,
+  waitingScreenMode: true,
   createdAt: true,
   updatedAt: true,
   clinic: {
@@ -124,6 +125,7 @@ export async function updateClinicSettings(
     appointmentDuration,
     gracePeriod,
     delayThreshold,
+    waitingScreenMode,
   } = input;
 
   const hasClinicFields =
@@ -137,8 +139,8 @@ export async function updateClinicSettings(
     maxPatientsPerDay !== undefined ||
     appointmentDuration !== undefined ||
     gracePeriod !== undefined ||
-    delayThreshold !== undefined;
-
+    delayThreshold !== undefined ||
+    waitingScreenMode !== undefined;
   const settings = await prisma.$transaction(async (tx) => {
     if (hasClinicFields) {
       await tx.clinic.update({
@@ -161,6 +163,7 @@ export async function updateClinicSettings(
           ...(appointmentDuration !== undefined ? { appointmentDuration } : {}),
           ...(gracePeriod !== undefined ? { gracePeriod } : {}),
           ...(delayThreshold !== undefined ? { delayThreshold } : {}),
+          ...(waitingScreenMode !== undefined ? { waitingScreenMode } : {}),
         },
       });
     }

@@ -51,6 +51,7 @@ export interface VisitDetail extends VisitSummary {
 export interface VisitFilters {
   search?: string;
   patientId?: string;
+  doctorId?: string;
   createdById?: string;
   date?: string;
   fromDate?: string;

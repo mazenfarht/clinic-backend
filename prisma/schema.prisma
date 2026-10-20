@@ -26,6 +26,11 @@ enum AppointmentStatus {
   NO_SHOW
 }
 
+enum WaitingScreenMode {
+  NUMBERS // public screen shows queue numbers only
+  NAMES   // public screen also shows masked patient names (e.g. "Ahmed M.")
+}
+
 enum QueueStatus {
   WAITING
   IN_PROGRESS
@@ -62,6 +67,7 @@ model ClinicSettings {
   appointmentDuration Int      @default(30)
   gracePeriod         Int      @default(15)
   delayThreshold      Int      @default(20)
+  waitingScreenMode   WaitingScreenMode @default(NUMBERS)
   createdAt           DateTime @default(now())
   updatedAt           DateTime @updatedAt
 
@@ -116,6 +122,8 @@ model Doctor {
   clinic       Clinic        @relation(fields: [clinicId], references: [id], onDelete: Cascade)
   user         User          @relation(fields: [userId], references: [id], onDelete: Cascade)
   appointments Appointment[]
+  queueEntries QueueEntry[]
+  visits       Visit[]
 
   @@index([clinicId, isBookable])
   @@map("doctors")
@@ -189,6 +197,8 @@ model Visit {
   id             String    @id @default(uuid())
   clinicId       String
   patientId      String
+  // Nullable only for legacy rows; the doctor who owns this visit
+  doctorId       String?
   createdById    String?
   updatedById    String?
   visitDate      DateTime  @db.Date
@@ -205,12 +215,15 @@ model Visit {
 
   clinic      Clinic       @relation(fields: [clinicId], references: [id], onDelete: Cascade)
   patient     Patient      @relation(fields: [patientId], references: [id], onDelete: Restrict)
+  doctor      Doctor?      @relation(fields: [doctorId], references: [id], onDelete: Restrict)
   createdBy   User?        @relation("VisitCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
   updatedBy   User?        @relation("VisitUpdatedBy", fields: [updatedById], references: [id], onDelete: SetNull)
   appointment Appointment?
   queueEntry  QueueEntry?
 
-  @@unique([patientId, visitDate])
+  // A patient may see several doctors on the same day, but only once per doctor
+  @@unique([patientId, visitDate, doctorId])
+  @@index([doctorId, visitDate])
   @@index([clinicId, visitDate])
   @@index([patientId])
   @@map("visits")
@@ -220,6 +233,8 @@ model QueueEntry {
   id          String      @id @default(uuid())
   clinicId    String
   visitId     String?     @unique
+  // Each doctor has their own queue. Nullable only for legacy rows.
+  doctorId    String?
   createdById String?
   updatedById String?
   queueDate   DateTime    @db.Date
@@ -236,10 +251,13 @@ model QueueEntry {
 
   clinic    Clinic @relation(fields: [clinicId], references: [id], onDelete: Cascade)
   visit     Visit? @relation(fields: [visitId], references: [id], onDelete: SetNull)
+  doctor    Doctor? @relation(fields: [doctorId], references: [id], onDelete: Restrict)
   createdBy User?  @relation("QueueEntryCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
   updatedBy User?  @relation("QueueEntryUpdatedBy", fields: [updatedById], references: [id], onDelete: SetNull)
 
-  @@unique([clinicId, queueDate, queueNumber])
+  // Queue numbers are unique PER DOCTOR per day
+  @@unique([doctorId, queueDate, queueNumber])
+  @@index([doctorId, queueDate, status])
   @@index([clinicId, queueDate, status])
   @@index([clinicId, queueDate])
   @@map("queue_entries")

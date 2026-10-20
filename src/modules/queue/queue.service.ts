@@ -7,6 +7,7 @@ import {
   BadRequestError,
 } from "../../shared/errors/AppError";
 import { ApiResponse } from "../../shared/utils/apiResponse";
+import { maskName } from "../../shared/utils/maskName";
 import { QUEUE_STATUS_TRANSITIONS } from "./queue.types";
 import type {
   QueueEntrySummary,
@@ -14,6 +15,9 @@ import type {
   QueueListResult,
   QueueStatistics,
   QueueStatus_Current,
+  DoctorQueueStatus,
+  WaitingBoard,
+  WaitingBoardEntry,
 } from "./queue.types";
 import type { CheckInInput, ReserveSlotInput } from "./queue.validation";
 import type { QueueStatus, Prisma } from "@prisma/client";
@@ -26,6 +30,7 @@ const queueEntrySummarySelect = {
   id: true,
   clinicId: true,
   visitId: true,
+  doctorId: true,
   queueDate: true,
   queueNumber: true,
   isReserved: true,
@@ -37,6 +42,13 @@ const queueEntrySummarySelect = {
   servedAt: true,
   createdAt: true,
   updatedAt: true,
+  doctor: {
+    select: {
+      id: true,
+      specialty: true,
+      user: { select: { fullName: true } },
+    },
+  },
   visit: {
     select: {
       id: true,
@@ -108,6 +120,7 @@ async function findEntryOrThrow(
   id: string;
   status: QueueStatus;
   visitId: string | null;
+  doctorId: string | null;
   startedAt: Date | null;
 }> {
   const entry = await prisma.queueEntry.findFirst({
@@ -116,6 +129,7 @@ async function findEntryOrThrow(
       id: true,
       status: true,
       visitId: true,
+      doctorId: true,
       startedAt: true,
     },
   });
@@ -127,13 +141,14 @@ async function findEntryOrThrow(
   return entry;
 }
 
+// Queue numbers restart at 1 for every doctor, every day.
 async function generateQueueNumber(
   tx: Prisma.TransactionClient,
-  clinicId: string,
+  doctorId: string,
   queueDate: Date
 ): Promise<number> {
   const lastEntry = await tx.queueEntry.findFirst({
-    where: { clinicId, queueDate },
+    where: { doctorId, queueDate },
     orderBy: { queueNumber: "desc" },
     select: { queueNumber: true },
   });
@@ -141,6 +156,28 @@ async function generateQueueNumber(
   const lastNumber = lastEntry?.queueNumber ?? 0;
 
   return lastNumber + 1;
+}
+
+// The doctor must belong to this clinic and have an active login account.
+async function assertDoctorActive(
+  doctorId: string,
+  clinicId: string
+): Promise<void> {
+  const doctor = await prisma.doctor.findFirst({
+    where: { id: doctorId, clinicId, user: { isActive: true } },
+    select: { id: true },
+  });
+
+  if (!doctor) {
+    throw new NotFoundError("Doctor not found or inactive");
+  }
+}
+
+function requireDoctor(doctorId: string | undefined): string {
+  if (!doctorId) {
+    throw new BadRequestError("doctorId is required");
+  }
+  return doctorId;
 }
 
 // ---------------------------------------------------------------------------
@@ -172,15 +209,15 @@ type QueuePriorityEntry = {
   appointmentTime: Date | null;
 };
 
-type QueueCandidate = QueuePriorityEntry & {
-  effectiveTime: number;
-  isLate: boolean;
-};
-
 // A checked-in entry that is guaranteed to have both timestamps.
 type CheckedInEntry = QueuePriorityEntry & {
   checkedInAt: Date;
   appointmentTime: Date;
+};
+
+type QueueCandidate = QueuePriorityEntry & {
+  effectiveTime: number;
+  isLate: boolean;
 };
 
 /**
@@ -216,6 +253,7 @@ type CheckedInEntry = QueuePriorityEntry & {
 async function selectNextWaiting(
   client: Prisma.TransactionClient | typeof prisma,
   clinicId: string,
+  doctorId: string,
   queueDate: Date
 ): Promise<string | null> {
   // -------------------------------------------------------------------------
@@ -227,6 +265,7 @@ async function selectNextWaiting(
   const waitingEntries = await client.queueEntry.findMany({
     where: {
       clinicId,
+      doctorId,
       queueDate,
       status: "WAITING",
     },
@@ -269,6 +308,7 @@ async function selectNextWaiting(
   const checkedInEntries = await client.queueEntry.findMany({
     where: {
       clinicId,
+      doctorId,
       queueDate,
       checkedInAt: {
         not: null,
@@ -499,9 +539,13 @@ async function selectNextWaiting(
 export async function checkIn(
   clinicId: string,
   createdById: string,
-  input: CheckInInput
+  input: CheckInInput,
+  resolvedDoctorId?: string
 ): Promise<QueueEntrySummary> {
   const queueDate = getTodayDate();
+
+  // Which doctor's queue? (resolved from the caller / body, or the appointment)
+  let doctorId = resolvedDoctorId;
 
   const patient = await prisma.patient.findFirst({
     where: {
@@ -530,6 +574,7 @@ export async function checkIn(
       select: {
         id: true,
         visitId: true,
+        doctorId: true,
       },
     });
 
@@ -542,7 +587,19 @@ export async function checkIn(
     if (appointment.visitId) {
       throw new ConflictError("Appointment already has a visit linked to it");
     }
+
+    if (appointment.doctorId) {
+      if (doctorId && doctorId !== appointment.doctorId) {
+        throw new BadRequestError(
+          "This appointment belongs to another doctor. Change the appointment's doctor first, or check in without an appointment."
+        );
+      }
+      doctorId = appointment.doctorId;
+    }
   }
+
+  const queueDoctorId = requireDoctor(doctorId);
+  await assertDoctorActive(queueDoctorId, clinicId);
 
   try {
     const entry = await prisma.$transaction(async (tx) => {
@@ -570,6 +627,7 @@ export async function checkIn(
         data: {
           clinicId,
           patientId: input.patientId,
+          doctorId: queueDoctorId,
           createdById,
           updatedById: createdById,
           visitDate: queueDate,
@@ -589,11 +647,16 @@ export async function checkIn(
         });
       }
 
-      const queueNumber = await generateQueueNumber(tx, clinicId, queueDate);
+      const queueNumber = await generateQueueNumber(
+        tx,
+        queueDoctorId,
+        queueDate
+      );
 
       const queueEntry = await tx.queueEntry.create({
         data: {
           clinicId,
+          doctorId: queueDoctorId,
           visitId: visit.id,
           createdById,
           updatedById: createdById,
@@ -616,8 +679,10 @@ export async function checkIn(
       "code" in err &&
       (err as { code: string }).code === "P2002"
     ) {
+      // Two receptionists checked in at the same moment and got the same
+      // number, or the patient already has a visit with this doctor today.
       throw new ConflictError(
-        "Patient already has an active queue entry for today"
+        "Could not check the patient in (duplicate entry or queue changed). Please retry."
       );
     }
 
@@ -632,13 +697,16 @@ export async function checkIn(
 export async function reserveSlot(
   clinicId: string,
   createdById: string,
-  input: ReserveSlotInput
+  input: ReserveSlotInput,
+  resolvedDoctorId?: string
 ): Promise<QueueEntrySummary> {
   const queueDate = getTodayDate();
+  const doctorId = requireDoctor(resolvedDoctorId);
+  await assertDoctorActive(doctorId, clinicId);
 
   const existing = await prisma.queueEntry.findFirst({
     where: {
-      clinicId,
+      doctorId,
       queueDate,
       queueNumber: input.queueNumber,
     },
@@ -647,13 +715,14 @@ export async function reserveSlot(
 
   if (existing) {
     throw new ConflictError(
-      `Queue number ${input.queueNumber} is already taken for today`
+      `Queue number ${input.queueNumber} is already taken for this doctor today`
     );
   }
 
   const entry = await prisma.queueEntry.create({
     data: {
       clinicId,
+      doctorId,
       createdById,
       updatedById: createdById,
       queueDate,
@@ -676,7 +745,7 @@ export async function getQueue(
   clinicId: string,
   filters: QueueEntryFilters
 ): Promise<QueueListResult> {
-  const { status, date, page = 1, limit = 20 } = filters;
+  const { status, doctorId, date, page = 1, limit = 20 } = filters;
 
   const queueDate = parseDateFilter(date);
   const skip = (page - 1) * limit;
@@ -685,6 +754,7 @@ export async function getQueue(
     clinicId,
     queueDate,
     ...(status ? { status } : {}),
+    ...(doctorId ? { doctorId } : {}),
   };
 
   const [total, entries] = await prisma.$transaction([
@@ -692,7 +762,7 @@ export async function getQueue(
     prisma.queueEntry.findMany({
       where,
       select: queueEntrySummarySelect,
-      orderBy: { queueNumber: "asc" },
+      orderBy: [{ doctorId: "asc" }, { queueNumber: "asc" }],
       skip,
       take: limit,
     }),
@@ -733,14 +803,19 @@ export async function getQueueEntryById(
 
 export async function callNext(
   clinicId: string,
-  updatedById: string
+  updatedById: string,
+  resolvedDoctorId?: string
 ): Promise<QueueEntrySummary> {
   const queueDate = getTodayDate();
+  const doctorId = requireDoctor(resolvedDoctorId);
+  await assertDoctorActive(doctorId, clinicId);
 
   const entry = await prisma.$transaction(async (tx) => {
+    // One patient at a time PER DOCTOR
     const inProgress = await tx.queueEntry.findFirst({
       where: {
         clinicId,
+        doctorId,
         queueDate,
         status: "IN_PROGRESS",
       },
@@ -762,7 +837,7 @@ export async function callNext(
     // algorithm.
     // -----------------------------------------------------------------------
 
-    const nextId = await selectNextWaiting(tx, clinicId, queueDate);
+    const nextId = await selectNextWaiting(tx, clinicId, doctorId, queueDate);
 
     if (!nextId) {
       throw new NotFoundError("No waiting patients in the queue");
@@ -941,6 +1016,7 @@ export async function recallPatient(
   const inProgress = await prisma.queueEntry.findFirst({
     where: {
       clinicId,
+      ...(existing.doctorId ? { doctorId: existing.doctorId } : {}),
       queueDate: getTodayDate(),
       status: "IN_PROGRESS",
     },
@@ -1017,22 +1093,27 @@ export async function cancelQueueEntry(
 // ---------------------------------------------------------------------------
 
 export async function getQueueStatus(
-  clinicId: string
+  clinicId: string,
+  resolvedDoctorId?: string
 ): Promise<QueueStatus_Current> {
   const queueDate = getTodayDate();
+  const doctorId = requireDoctor(resolvedDoctorId);
+
+  const base = { clinicId, doctorId, queueDate };
 
   // Use the same priority selector as callNext()
-  const nextWaitingId = await selectNextWaiting(prisma, clinicId, queueDate);
+  const nextWaitingId = await selectNextWaiting(
+    prisma,
+    clinicId,
+    doctorId,
+    queueDate
+  );
 
   // Always execute valid Prisma queries inside $transaction
   const [currentlyServing, waitingCount, servedCount] =
     await prisma.$transaction([
       prisma.queueEntry.findFirst({
-        where: {
-          clinicId,
-          queueDate,
-          status: "IN_PROGRESS",
-        },
+        where: { ...base, status: "IN_PROGRESS" },
         select: queueEntrySummarySelect,
         orderBy: {
           calledAt: "desc",
@@ -1040,31 +1121,18 @@ export async function getQueueStatus(
       }),
 
       prisma.queueEntry.count({
-        where: {
-          clinicId,
-          queueDate,
-          status: "WAITING",
-        },
+        where: { ...base, status: "WAITING" },
       }),
 
       prisma.queueEntry.count({
-        where: {
-          clinicId,
-          queueDate,
-          status: "SERVED",
-        },
+        where: { ...base, status: "SERVED" },
       }),
     ]);
 
   // This query is optional, so execute it separately.
   const nextWaiting = nextWaitingId
     ? await prisma.queueEntry.findFirst({
-        where: {
-          id: nextWaitingId,
-          clinicId,
-          queueDate,
-          status: "WAITING",
-        },
+        where: { ...base, id: nextWaitingId, status: "WAITING" },
         select: queueEntrySummarySelect,
       })
     : null;
@@ -1078,60 +1146,83 @@ export async function getQueueStatus(
 }
 
 // ---------------------------------------------------------------------------
+// Get queue status for EVERY doctor (reception overview)
+// ---------------------------------------------------------------------------
+
+export async function getAllDoctorsQueueStatus(
+  clinicId: string
+): Promise<DoctorQueueStatus[]> {
+  const doctors = await prisma.doctor.findMany({
+    where: { clinicId, user: { isActive: true } },
+    select: {
+      id: true,
+      specialty: true,
+      user: { select: { fullName: true } },
+    },
+    orderBy: { user: { fullName: "asc" } },
+  });
+
+  return Promise.all(
+    doctors.map(async (d) => ({
+      doctor: {
+        id: d.id,
+        fullName: d.user.fullName,
+        specialty: d.specialty,
+      },
+      ...(await getQueueStatus(clinicId, d.id)),
+    }))
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Get queue statistics
 // ---------------------------------------------------------------------------
 
 export async function getQueueStatistics(
   clinicId: string,
-  date?: string
+  date?: string,
+  doctorId?: string
 ): Promise<QueueStatistics> {
   const queueDate = parseDateFilter(date);
+  const base = { clinicId, queueDate, ...(doctorId ? { doctorId } : {}) };
 
   const [total, waiting, inProgress, served, cancelled, servedEntries] =
     await prisma.$transaction([
       prisma.queueEntry.count({
-        where: {
-          clinicId,
-          queueDate,
-        },
+        where: base,
       }),
 
       prisma.queueEntry.count({
         where: {
-          clinicId,
-          queueDate,
+          ...base,
           status: "WAITING",
         },
       }),
 
       prisma.queueEntry.count({
         where: {
-          clinicId,
-          queueDate,
+          ...base,
           status: "IN_PROGRESS",
         },
       }),
 
       prisma.queueEntry.count({
         where: {
-          clinicId,
-          queueDate,
+          ...base,
           status: "SERVED",
         },
       }),
 
       prisma.queueEntry.count({
         where: {
-          clinicId,
-          queueDate,
+          ...base,
           status: "CANCELLED",
         },
       }),
 
       prisma.queueEntry.findMany({
         where: {
-          clinicId,
-          queueDate,
+          ...base,
           status: "SERVED",
           isReserved: false,
           checkedInAt: {
@@ -1203,13 +1294,17 @@ export async function getQueueStatistics(
 
 export async function resetQueue(
   clinicId: string,
-  updatedById: string
+  updatedById: string,
+  resolvedDoctorId?: string
 ): Promise<{ cancelled: number }> {
   const queueDate = getTodayDate();
 
   const result = await prisma.queueEntry.updateMany({
     where: {
       clinicId,
+      // A doctor resets only their own queue; reception may reset one doctor
+      // or (no doctorId) every queue.
+      ...(resolvedDoctorId ? { doctorId: resolvedDoctorId } : {}),
       queueDate,
       status: {
         in: ["WAITING", "IN_PROGRESS"],
@@ -1223,5 +1318,111 @@ export async function resetQueue(
 
   return {
     cancelled: result.count,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Public waiting-room board
+//
+// One card per doctor: who is being served now, who is next (same priority
+// rule as callNext) and how many are waiting. Only doctors who have at least
+// one queue entry today are listed, unless a specific doctor was requested.
+// ---------------------------------------------------------------------------
+
+export async function getWaitingBoard(
+  clinicId: string,
+  onlyDoctorId?: string
+): Promise<WaitingBoard> {
+  const queueDate = getTodayDate();
+
+  const settings = await prisma.clinicSettings.findUnique({
+    where: { clinicId },
+    select: { waitingScreenMode: true },
+  });
+  const mode = settings?.waitingScreenMode ?? "NUMBERS";
+
+  const doctors = await prisma.doctor.findMany({
+    where: {
+      clinicId,
+      user: { isActive: true },
+      ...(onlyDoctorId
+        ? { id: onlyDoctorId }
+        : { queueEntries: { some: { queueDate } } }),
+    },
+    select: {
+      id: true,
+      specialty: true,
+      user: { select: { fullName: true } },
+    },
+    orderBy: { user: { fullName: "asc" } },
+  });
+
+  const boardSelect = {
+    queueNumber: true,
+    reservedFor: true,
+    visit: { select: { patient: { select: { fullName: true } } } },
+  } as const;
+
+  type BoardRow = {
+    queueNumber: number;
+    reservedFor: string | null;
+    visit: { patient: { fullName: string } } | null;
+  };
+
+  const toEntry = (row: BoardRow | null): WaitingBoardEntry | null => {
+    if (!row) return null;
+    const rawName = row.visit?.patient.fullName ?? row.reservedFor ?? null;
+    return {
+      queueNumber: row.queueNumber,
+      patientName: mode === "NAMES" && rawName ? maskName(rawName) : null,
+    };
+  };
+
+  const cards = await Promise.all(
+    doctors.map(async (d) => {
+      const nextId = await selectNextWaiting(prisma, clinicId, d.id, queueDate);
+
+      const [nowServing, next, waitingCount] = await prisma.$transaction([
+        prisma.queueEntry.findFirst({
+          where: {
+            clinicId,
+            doctorId: d.id,
+            queueDate,
+            status: "IN_PROGRESS",
+          },
+          select: boardSelect,
+          orderBy: { calledAt: "desc" },
+        }),
+        prisma.queueEntry.findFirst({
+          where: {
+            clinicId,
+            doctorId: d.id,
+            queueDate,
+            status: "WAITING",
+            // no match when nobody is waiting
+            id: nextId ?? "00000000-0000-0000-0000-000000000000",
+          },
+          select: boardSelect,
+        }),
+        prisma.queueEntry.count({
+          where: { clinicId, doctorId: d.id, queueDate, status: "WAITING" },
+        }),
+      ]);
+
+      return {
+        doctorId: d.id,
+        fullName: d.user.fullName,
+        specialty: d.specialty,
+        nowServing: toEntry(nowServing),
+        next: toEntry(next),
+        waitingCount,
+      };
+    })
+  );
+
+  return {
+    mode,
+    generatedAt: new Date().toISOString(),
+    doctors: cards,
   };
 }

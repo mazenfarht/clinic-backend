@@ -2,13 +2,23 @@
 
 import { Router } from "express";
 import * as PublicController from "./public.controller";
-import { publicWriteLimiter } from "../../middleware/rateLimiter.middleware";
+import {
+  publicWriteLimiter,
+  waitingScreenLimiter,
+} from "../../middleware/rateLimiter.middleware";
 
 const router = Router();
 
 // ---------------------------------------------------------------------------
 // No auth middleware — all routes in this module are public
 // ---------------------------------------------------------------------------
+
+// GET /public/clinics/:clinicId/waiting-screen?doctorId=...  (polled by the TV)
+router.get(
+  "/clinics/:clinicId/waiting-screen",
+  waitingScreenLimiter,
+  PublicController.getWaitingScreen
+);
 
 // GET /public/clinics/:clinicId/doctors
 router.get("/clinics/:clinicId/doctors", PublicController.listDoctors);

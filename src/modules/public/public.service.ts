@@ -3,6 +3,9 @@
 import { Prisma } from "@prisma/client";
 import prisma from "../../config/database";
 import config from "../../config";
+import { maskName } from "../../shared/utils/maskName";
+import { getWaitingBoard } from "../queue/queue.service";
+import type { WaitingBoard } from "../queue/queue.types";
 import {
   NotFoundError,
   BadRequestError,
@@ -207,12 +210,6 @@ function isUniqueViolation(err: unknown): boolean {
   return (
     err instanceof Prisma.PrismaClientKnownRequestError && err.code === "P2002"
   );
-}
-
-// "Ahmed Mohamed Ali" -> "Ahmed M."  (avoid leaking full names to anonymous callers)
-function maskName(fullName: string): string {
-  const [first, second] = fullName.trim().split(/\s+/);
-  return second ? `${first} ${second[0]}.` : first;
 }
 
 // ---------------------------------------------------------------------------
@@ -532,4 +529,18 @@ export async function listBookableDoctors(clinicId: string) {
     specialty: d.specialty,
     bio: d.bio,
   }));
+}
+
+// ---------------------------------------------------------------------------
+// GET /public/clinics/:clinicId/waiting-screen
+// Public waiting-room display: queue numbers per doctor (and masked names when
+// the clinic enabled waitingScreenMode = NAMES). Never exposes phone / MRN.
+// ---------------------------------------------------------------------------
+
+export async function getWaitingScreen(
+  clinicId: string,
+  doctorId?: string
+): Promise<WaitingBoard> {
+  await findActiveClinicWithSettings(clinicId);
+  return getWaitingBoard(clinicId, doctorId);
 }

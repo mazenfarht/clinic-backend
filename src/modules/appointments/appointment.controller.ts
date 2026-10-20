@@ -11,6 +11,10 @@ import {
   appointmentQuerySchema,
   appointmentIdSchema,
 } from "./appointment.validation";
+import {
+  resolveDoctorId,
+  assertAppointmentAccess,
+} from "../doctors/doctor-scope";
 
 // ---------------------------------------------------------------------------
 // Resolve authenticated clinic and user from token
@@ -31,6 +35,8 @@ export const createAppointment = asyncHandler(
   async (req: Request, res: Response) => {
     const { clinicId, userId } = resolveAuth(req);
     const input = createAppointmentSchema.parse(req.body);
+    // DOCTOR logins can only book into their own schedule
+    await resolveDoctorId(req, input.doctorId);
     const appointment = await AppointmentService.createAppointment(
       clinicId,
       userId,
@@ -49,7 +55,12 @@ export const listAppointments = asyncHandler(
   async (req: Request, res: Response) => {
     const { clinicId } = resolveAuth(req);
     const filters = appointmentQuerySchema.parse(req.query);
-    const result = await AppointmentService.listAppointments(clinicId, filters);
+    // DOCTOR -> forced to their own appointments; RECEPTIONIST -> all (or ?doctorId=)
+    const doctorId = await resolveDoctorId(req, filters.doctorId);
+    const result = await AppointmentService.listAppointments(clinicId, {
+      ...filters,
+      doctorId,
+    });
 
     ApiResponse.paginated(
       res,
@@ -68,6 +79,7 @@ export const getAppointmentById = asyncHandler(
   async (req: Request, res: Response) => {
     const { clinicId } = resolveAuth(req);
     const { id } = appointmentIdSchema.parse(req.params);
+    await assertAppointmentAccess(req, id);
     const appointment = await AppointmentService.getAppointmentById(
       id,
       clinicId
@@ -85,7 +97,10 @@ export const updateAppointment = asyncHandler(
   async (req: Request, res: Response) => {
     const { clinicId, userId } = resolveAuth(req);
     const { id } = appointmentIdSchema.parse(req.params);
+    await assertAppointmentAccess(req, id);
     const input = updateAppointmentSchema.parse(req.body);
+    // Only reception can move an appointment to a different doctor
+    await resolveDoctorId(req, input.doctorId);
     const appointment = await AppointmentService.updateAppointment(
       id,
       clinicId,
@@ -105,6 +120,7 @@ export const confirmAppointment = asyncHandler(
   async (req: Request, res: Response) => {
     const { clinicId, userId } = resolveAuth(req);
     const { id } = appointmentIdSchema.parse(req.params);
+    await assertAppointmentAccess(req, id);
     const appointment = await AppointmentService.confirmAppointment(
       id,
       clinicId,
@@ -123,6 +139,7 @@ export const cancelAppointment = asyncHandler(
   async (req: Request, res: Response) => {
     const { clinicId, userId } = resolveAuth(req);
     const { id } = appointmentIdSchema.parse(req.params);
+    await assertAppointmentAccess(req, id);
     const appointment = await AppointmentService.cancelAppointment(
       id,
       clinicId,
@@ -141,6 +158,7 @@ export const completeAppointment = asyncHandler(
   async (req: Request, res: Response) => {
     const { clinicId, userId } = resolveAuth(req);
     const { id } = appointmentIdSchema.parse(req.params);
+    await assertAppointmentAccess(req, id);
     const appointment = await AppointmentService.completeAppointment(
       id,
       clinicId,
@@ -159,6 +177,7 @@ export const noShowAppointment = asyncHandler(
   async (req: Request, res: Response) => {
     const { clinicId, userId } = resolveAuth(req);
     const { id } = appointmentIdSchema.parse(req.params);
+    await assertAppointmentAccess(req, id);
     const appointment = await AppointmentService.noShowAppointment(
       id,
       clinicId,
