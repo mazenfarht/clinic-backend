@@ -8,6 +8,10 @@ const dateSchema = z
   .regex(/^\d{4}-\d{2}-\d{2}$/, "Date must be in YYYY-MM-DD format")
   .refine((val) => !isNaN(new Date(val).getTime()), "Invalid date");
 
+// Optional doctor filter. DOCTOR logins are always forced to their own id by the
+// controller; reception may pass any doctor, or omit it for clinic-wide numbers.
+const doctorIdSchema = z.string().uuid("Invalid doctor ID format").optional();
+
 const paginationSchema = {
   page: z
     .string()
@@ -28,30 +32,36 @@ const paginationSchema = {
 };
 
 export const overviewQuerySchema = z.object({
+  doctorId: doctorIdSchema,
   date: dateSchema.optional(),
 });
 
 export const todayQuerySchema = z.object({
+  doctorId: doctorIdSchema,
   date: dateSchema.optional(),
 });
 
 export const queueDashboardQuerySchema = z.object({
+  doctorId: doctorIdSchema,
   date: dateSchema.optional(),
   ...paginationSchema,
 });
 
 export const appointmentsDashboardQuerySchema = z.object({
+  doctorId: doctorIdSchema,
   fromDate: dateSchema.optional(),
   toDate: dateSchema.optional(),
   ...paginationSchema,
 });
 
 export const patientsDashboardQuerySchema = z.object({
+  doctorId: doctorIdSchema,
   ...paginationSchema,
 });
 
 export const analyticsQuerySchema = z
   .object({
+    doctorId: doctorIdSchema,
     fromDate: dateSchema.optional(),
     toDate: dateSchema.optional(),
   })
