@@ -56,7 +56,7 @@ function buildConfig() {
 
     jwt: Object.freeze({
       secret: requireEnv("JWT_SECRET"),
-      expiresIn: optionalEnv("JWT_EXPIRES_IN", "7d"),
+      expiresIn: optionalEnv("JWT_EXPIRES_IN", "15m"),
       refreshSecret: requireEnv("JWT_REFRESH_SECRET"),
       refreshExpiresIn: optionalEnv("JWT_REFRESH_EXPIRES_IN", "30d"),
     }),

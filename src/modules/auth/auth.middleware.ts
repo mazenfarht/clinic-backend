@@ -1,15 +1,28 @@
-// src/middleware/auth.middleware.ts
+// src/modules/auth/auth.middleware.ts
 
 import type { Request, Response, NextFunction } from "express";
 import jwt from "jsonwebtoken";
 import config from "../../config";
-import { UnauthorizedError } from "../../shared/errors/AppError";
+import prisma from "../../config/database";
+import { AppError, UnauthorizedError } from "../../shared/errors/AppError";
 import type { JwtAccessPayload } from "./auth.types";
-export function authMiddleware(
+
+// ---------------------------------------------------------------------------
+// Verifies the access token AND checks the user against the database on every
+// request, so that:
+//   - a deactivated user (or a deactivated clinic) is locked out immediately,
+//     not when the token expires;
+//   - tokens revoked by logout-all / password change / deactivation
+//     (tokenVersion mismatch) stop working at once;
+//   - the role used for authorization is always the CURRENT one, never a stale
+//     value baked into the token.
+// ---------------------------------------------------------------------------
+
+export async function authMiddleware(
   req: Request,
   _res: Response,
   next: NextFunction
-): void {
+): Promise<void> {
   try {
     const authHeader = req.headers.authorization;
 
@@ -35,11 +48,34 @@ export function authMiddleware(
       throw new UnauthorizedError("Invalid token type");
     }
 
-    req.user = payload;
+    const user = await prisma.user.findUnique({
+      where: { id: payload.sub },
+      select: {
+        clinicId: true,
+        role: true,
+        isActive: true,
+        tokenVersion: true,
+        clinic: { select: { isActive: true } },
+      },
+    });
+
+    if (!user || !user.clinic.isActive) {
+      throw new UnauthorizedError("Invalid access token");
+    }
+
+    if (!user.isActive) {
+      throw new UnauthorizedError("Your account has been deactivated");
+    }
+
+    if (payload.tv !== user.tokenVersion) {
+      throw new UnauthorizedError("Access token has been revoked");
+    }
+
+    req.user = { ...payload, clinicId: user.clinicId, role: user.role };
 
     next();
   } catch (err) {
-    if (err instanceof UnauthorizedError) {
+    if (err instanceof AppError) {
       next(err);
       return;
     }
@@ -59,6 +95,7 @@ export function authMiddleware(
       return;
     }
 
-    next(new UnauthorizedError("Authentication failed"));
+    // Unexpected failure (e.g. database down) — let the error handler decide
+    next(err);
   }
 }

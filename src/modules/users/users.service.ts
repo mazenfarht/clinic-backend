@@ -3,7 +3,12 @@
 import bcrypt from "bcrypt";
 import prisma from "../../config/database";
 import config from "../../config";
-import { ConflictError } from "../../shared/errors/AppError";
+import {
+  ConflictError,
+  NotFoundError,
+  BadRequestError,
+} from "../../shared/errors/AppError";
+import { revokeAllSessions } from "../auth/auth.service";
 import type { CreateReceptionistInput } from "./users.validation";
 import type { AuthenticatedUser } from "../auth/auth.types";
 
@@ -59,6 +64,59 @@ export async function createReceptionist(
     },
     select: userPublicSelect,
   });
+
+  return user as AuthenticatedUser;
+}
+
+// ---------------------------------------------------------------------------
+// List users of the clinic
+// ---------------------------------------------------------------------------
+
+export async function listUsers(
+  clinicId: string
+): Promise<AuthenticatedUser[]> {
+  const users = await prisma.user.findMany({
+    where: { clinicId },
+    select: userPublicSelect,
+    orderBy: [{ role: "asc" }, { fullName: "asc" }],
+  });
+
+  return users as AuthenticatedUser[];
+}
+
+// ---------------------------------------------------------------------------
+// Activate / deactivate a user.
+// Deactivating also ends all of their sessions immediately.
+// ---------------------------------------------------------------------------
+
+export async function setUserActive(
+  clinicId: string,
+  actingUserId: string,
+  userId: string,
+  isActive: boolean
+): Promise<AuthenticatedUser> {
+  if (userId === actingUserId) {
+    throw new BadRequestError("You cannot change your own account status");
+  }
+
+  const target = await prisma.user.findFirst({
+    where: { id: userId, clinicId },
+    select: { id: true },
+  });
+
+  if (!target) {
+    throw new NotFoundError("User not found");
+  }
+
+  const user = await prisma.user.update({
+    where: { id: userId },
+    data: { isActive },
+    select: userPublicSelect,
+  });
+
+  if (!isActive) {
+    await revokeAllSessions(userId);
+  }
 
   return user as AuthenticatedUser;
 }

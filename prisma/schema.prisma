@@ -84,12 +84,16 @@ model User {
   fullName     String
   role         Role      @default(RECEPTIONIST)
   isActive     Boolean   @default(true)
+  // Bumped on logout-all, password change and deactivation: every access token
+  // issued before the bump (it carries the old value) is rejected immediately.
+  tokenVersion Int       @default(0)
   lastLogin    DateTime?
   createdAt    DateTime  @default(now())
   updatedAt    DateTime  @updatedAt
 
   clinic Clinic  @relation(fields: [clinicId], references: [id], onDelete: Cascade)
   doctor Doctor?
+  refreshTokens RefreshToken[]
 
   patientsCreated     Patient[]     @relation("PatientCreatedBy")
   patientsUpdated     Patient[]     @relation("PatientUpdatedBy")
@@ -103,6 +107,26 @@ model User {
   @@unique([clinicId, email])
   @@index([clinicId])
   @@map("users")
+}
+
+// One row per issued refresh token. The row id is the token's `jti` claim, so a
+// token can be revoked server-side (logout) and rotated on every refresh.
+model RefreshToken {
+  id           String    @id @default(uuid())
+  userId       String
+  expiresAt    DateTime
+  revokedAt    DateTime?
+  // set when this token was rotated into a new one (used to detect token reuse)
+  replacedById String?
+  userAgent    String?
+  ip           String?
+  createdAt    DateTime  @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, revokedAt])
+  @@index([expiresAt])
+  @@map("refresh_tokens")
 }
 
 model Doctor {

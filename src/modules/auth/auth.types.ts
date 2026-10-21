@@ -6,13 +6,23 @@ export interface JwtAccessPayload {
   sub: string;
   clinicId: string;
   role: Role;
+  // User.tokenVersion at issue time; a mismatch means the token was revoked
+  tv: number;
   type: "access";
 }
 
 export interface JwtRefreshPayload {
   sub: string;
   clinicId: string;
+  // RefreshToken row id (set through the standard `jti` claim)
+  jti: string;
   type: "refresh";
+}
+
+// Request metadata stored next to each refresh token
+export interface SessionMeta {
+  userAgent?: string;
+  ip?: string;
 }
 
 export interface AuthTokens {

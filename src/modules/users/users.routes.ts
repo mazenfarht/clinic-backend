@@ -19,4 +19,24 @@ router.post(
   UsersController.createReceptionist
 );
 
+// ---------------------------------------------------------------------------
+// GET /users               — list the clinic's accounts
+// PATCH /users/:id/status  — activate / deactivate (ends their sessions)
+// Requires: DOCTOR role
+// ---------------------------------------------------------------------------
+
+router.get(
+  "/",
+  authMiddleware,
+  requireRoles("DOCTOR"),
+  UsersController.listUsers
+);
+
+router.patch(
+  "/:id/status",
+  authMiddleware,
+  requireRoles("DOCTOR"),
+  UsersController.setUserStatus
+);
+
 export default router;
