@@ -14,7 +14,7 @@ const workingHoursDaySchema = z.object({
   isOpen: z.boolean(),
 });
 
-const workingHoursSchema = z.object({
+export const workingHoursSchema = z.object({
   monday: workingHoursDaySchema,
   tuesday: workingHoursDaySchema,
   wednesday: workingHoursDaySchema,
@@ -79,6 +79,8 @@ export const updateClinicSettingsSchema = z
       .min(1, "Delay threshold must be at least 1 minute")
       .max(240, "Delay threshold must not exceed 240 minutes")
       .optional(),
+    // What the public waiting-room screen shows: queue numbers only, or numbers + masked names
+    waitingScreenMode: z.enum(["NUMBERS", "NAMES"]).optional(),
   })
   .refine((data) => Object.keys(data).length > 0, {
     message: "At least one field must be provided for update",

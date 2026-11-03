@@ -106,6 +106,7 @@ export const visitQuerySchema = z.object({
     .max(100, "Search term must not exceed 100 characters")
     .optional(),
   patientId: z.string().uuid("Invalid patient ID format").optional(),
+  doctorId: z.string().uuid("Invalid doctor ID format").optional(),
   createdById: z.string().uuid("Invalid doctor ID format").optional(),
   date: z
     .string()

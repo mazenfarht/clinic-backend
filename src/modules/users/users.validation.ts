@@ -20,3 +20,13 @@ export const createReceptionistSchema = z.object({
 });
 
 export type CreateReceptionistInput = z.infer<typeof createReceptionistSchema>;
+
+export const userIdSchema = z.object({
+  id: z.string().uuid("Invalid user ID format"),
+});
+
+export const updateUserStatusSchema = z.object({
+  isActive: z.boolean(),
+});
+
+export type UpdateUserStatusInput = z.infer<typeof updateUserStatusSchema>;

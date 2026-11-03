@@ -4,6 +4,7 @@ import type { Request, Response } from "express";
 import * as PublicService from "./public.service";
 import { ApiResponse } from "../../shared/utils/apiResponse";
 import asyncHandler from "../../shared/utils/asyncHandler";
+import { z } from "zod";
 import {
   clinicIdParamSchema,
   availabilityQuerySchema,
@@ -19,9 +20,13 @@ import {
 export const getAvailability = asyncHandler(
   async (req: Request, res: Response) => {
     const { clinicId } = clinicIdParamSchema.parse(req.params);
-    const { date } = availabilityQuerySchema.parse(req.query);
+    const { doctorId, date } = availabilityQuerySchema.parse(req.query);
 
-    const result = await PublicService.getAvailability(clinicId, date);
+    const result = await PublicService.getAvailability(
+      clinicId,
+      doctorId,
+      date
+    );
 
     ApiResponse.ok(res, result, "Availability retrieved successfully");
   }
@@ -69,5 +74,33 @@ export const bookAppointment = asyncHandler(
     const result = await PublicService.bookAppointment(clinicId, input);
 
     ApiResponse.created(res, result, "Appointment booked successfully");
+  }
+);
+
+// ---------------------------------------------------------------------------
+// GET /public/clinics/:clinicId/doctors
+// ---------------------------------------------------------------------------
+
+export const listDoctors = asyncHandler(async (req: Request, res: Response) => {
+  const { clinicId } = clinicIdParamSchema.parse(req.params);
+  const doctors = await PublicService.listBookableDoctors(clinicId);
+  ApiResponse.ok(res, doctors, "Doctors retrieved successfully");
+});
+
+// ---------------------------------------------------------------------------
+// GET /public/clinics/:clinicId/waiting-screen?doctorId=
+// ---------------------------------------------------------------------------
+
+export const getWaitingScreen = asyncHandler(
+  async (req: Request, res: Response) => {
+    const { clinicId } = clinicIdParamSchema.parse(req.params);
+    const { doctorId } = z
+      .object({
+        doctorId: z.string().uuid("Invalid doctor ID format").optional(),
+      })
+      .parse(req.query);
+
+    const board = await PublicService.getWaitingScreen(clinicId, doctorId);
+    ApiResponse.ok(res, board, "Waiting screen data retrieved successfully");
   }
 );

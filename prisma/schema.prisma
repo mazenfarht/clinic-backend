@@ -26,6 +26,11 @@ enum AppointmentStatus {
   NO_SHOW
 }
 
+enum WaitingScreenMode {
+  NUMBERS // public screen shows queue numbers only
+  NAMES   // public screen also shows masked patient names (e.g. "Ahmed M.")
+}
+
 enum QueueStatus {
   WAITING
   IN_PROGRESS
@@ -45,6 +50,7 @@ model Clinic {
 
   settings     ClinicSettings?
   users        User[]
+  doctors      Doctor[]
   patients     Patient[]
   appointments Appointment[]
   visits       Visit[]
@@ -61,6 +67,7 @@ model ClinicSettings {
   appointmentDuration Int      @default(30)
   gracePeriod         Int      @default(15)
   delayThreshold      Int      @default(20)
+  waitingScreenMode   WaitingScreenMode @default(NUMBERS)
   createdAt           DateTime @default(now())
   updatedAt           DateTime @updatedAt
 
@@ -77,11 +84,16 @@ model User {
   fullName     String
   role         Role      @default(RECEPTIONIST)
   isActive     Boolean   @default(true)
+  // Bumped on logout-all, password change and deactivation: every access token
+  // issued before the bump (it carries the old value) is rejected immediately.
+  tokenVersion Int       @default(0)
   lastLogin    DateTime?
   createdAt    DateTime  @default(now())
   updatedAt    DateTime  @updatedAt
 
-  clinic Clinic @relation(fields: [clinicId], references: [id], onDelete: Cascade)
+  clinic Clinic  @relation(fields: [clinicId], references: [id], onDelete: Cascade)
+  doctor Doctor?
+  refreshTokens RefreshToken[]
 
   patientsCreated     Patient[]     @relation("PatientCreatedBy")
   patientsUpdated     Patient[]     @relation("PatientUpdatedBy")
@@ -95,6 +107,50 @@ model User {
   @@unique([clinicId, email])
   @@index([clinicId])
   @@map("users")
+}
+
+// One row per issued refresh token. The row id is the token's `jti` claim, so a
+// token can be revoked server-side (logout) and rotated on every refresh.
+model RefreshToken {
+  id           String    @id @default(uuid())
+  userId       String
+  expiresAt    DateTime
+  revokedAt    DateTime?
+  // set when this token was rotated into a new one (used to detect token reuse)
+  replacedById String?
+  userAgent    String?
+  ip           String?
+  createdAt    DateTime  @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, revokedAt])
+  @@index([expiresAt])
+  @@map("refresh_tokens")
+}
+
+model Doctor {
+  id                  String   @id @default(uuid())
+  clinicId            String
+  userId              String   @unique
+  specialty           String
+  bio                 String?
+  // Optional per-doctor overrides — fall back to ClinicSettings when null
+  appointmentDuration Int?
+  workingHours        Json?
+  // false = hidden from online booking (staff can still book)
+  isBookable          Boolean  @default(true)
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+
+  clinic       Clinic        @relation(fields: [clinicId], references: [id], onDelete: Cascade)
+  user         User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  appointments Appointment[]
+  queueEntries QueueEntry[]
+  visits       Visit[]
+
+  @@index([clinicId, isBookable])
+  @@map("doctors")
 }
 
 model Patient {
@@ -130,6 +186,8 @@ model Appointment {
   id              String            @id @default(uuid())
   clinicId        String
   patientId       String
+  // Nullable only for legacy rows; every new appointment requires a doctor
+  doctorId        String?
   createdById     String?
   updatedById     String?
   visitId         String?           @unique
@@ -142,13 +200,16 @@ model Appointment {
 
   clinic    Clinic  @relation(fields: [clinicId], references: [id], onDelete: Cascade)
   patient   Patient @relation(fields: [patientId], references: [id], onDelete: Restrict)
+  doctor    Doctor? @relation(fields: [doctorId], references: [id], onDelete: Restrict)
   createdBy User?   @relation("AppointmentCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
   updatedBy User?   @relation("AppointmentUpdatedBy", fields: [updatedById], references: [id], onDelete: SetNull)
   visit     Visit?  @relation(fields: [visitId], references: [id], onDelete: SetNull)
 
 // NOTE: The uniqueness constraint for active appointments (SCHEDULED, CONFIRMED)
-// is enforced by a partial unique index managed manually in migrations.
-// Do NOT add @@unique([clinicId, appointmentDate, appointmentTime]) here.
+// is enforced per DOCTOR by a partial unique index managed manually in migrations:
+//   (doctorId, appointmentDate, appointmentTime) WHERE status IN (...)
+// Do NOT add a Prisma @@unique for it here.
+  @@index([doctorId, appointmentDate])
   @@index([clinicId, appointmentDate, appointmentTime])
   @@index([clinicId, appointmentDate])
   @@index([patientId, appointmentDate])
@@ -160,6 +221,8 @@ model Visit {
   id             String    @id @default(uuid())
   clinicId       String
   patientId      String
+  // Nullable only for legacy rows; the doctor who owns this visit
+  doctorId       String?
   createdById    String?
   updatedById    String?
   visitDate      DateTime  @db.Date
@@ -176,12 +239,15 @@ model Visit {
 
   clinic      Clinic       @relation(fields: [clinicId], references: [id], onDelete: Cascade)
   patient     Patient      @relation(fields: [patientId], references: [id], onDelete: Restrict)
+  doctor      Doctor?      @relation(fields: [doctorId], references: [id], onDelete: Restrict)
   createdBy   User?        @relation("VisitCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
   updatedBy   User?        @relation("VisitUpdatedBy", fields: [updatedById], references: [id], onDelete: SetNull)
   appointment Appointment?
   queueEntry  QueueEntry?
 
-  @@unique([patientId, visitDate])
+  // A patient may see several doctors on the same day, but only once per doctor
+  @@unique([patientId, visitDate, doctorId])
+  @@index([doctorId, visitDate])
   @@index([clinicId, visitDate])
   @@index([patientId])
   @@map("visits")
@@ -191,6 +257,8 @@ model QueueEntry {
   id          String      @id @default(uuid())
   clinicId    String
   visitId     String?     @unique
+  // Each doctor has their own queue. Nullable only for legacy rows.
+  doctorId    String?
   createdById String?
   updatedById String?
   queueDate   DateTime    @db.Date
@@ -207,10 +275,13 @@ model QueueEntry {
 
   clinic    Clinic @relation(fields: [clinicId], references: [id], onDelete: Cascade)
   visit     Visit? @relation(fields: [visitId], references: [id], onDelete: SetNull)
+  doctor    Doctor? @relation(fields: [doctorId], references: [id], onDelete: Restrict)
   createdBy User?  @relation("QueueEntryCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
   updatedBy User?  @relation("QueueEntryUpdatedBy", fields: [updatedById], references: [id], onDelete: SetNull)
 
-  @@unique([clinicId, queueDate, queueNumber])
+  // Queue numbers are unique PER DOCTOR per day
+  @@unique([doctorId, queueDate, queueNumber])
+  @@index([doctorId, queueDate, status])
   @@index([clinicId, queueDate, status])
   @@index([clinicId, queueDate])
   @@map("queue_entries")

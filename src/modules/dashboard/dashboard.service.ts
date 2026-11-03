@@ -49,6 +49,27 @@ function getDefaultAnalyticsPeriod(): { fromDate: string; toDate: string } {
   };
 }
 
+// Restricts a query to one doctor when doctorId is given (clinic-wide otherwise)
+function doctorScope(clinicId: string, doctorId?: string) {
+  return { clinicId, ...(doctorId ? { doctorId } : {}) };
+}
+
+// Patients have no doctor of their own: a doctor's patients are the ones who
+// have a visit or an appointment with them.
+function patientScopeFor(clinicId: string, doctorId?: string) {
+  return {
+    clinicId,
+    ...(doctorId
+      ? {
+          OR: [
+            { visits: { some: { doctorId } } },
+            { appointments: { some: { doctorId } } },
+          ],
+        }
+      : {}),
+  };
+}
+
 function calculateAverage(values: number[]): number | null {
   if (values.length === 0) return null;
   return parseFloat(
@@ -59,14 +80,17 @@ function calculateAverage(values: number[]): number | null {
 async function computeQueueTimeMetrics(
   clinicId: string,
   start: Date,
-  end: Date
+  end: Date,
+  doctorId?: string
 ): Promise<{
   averageWaitTimeMinutes: number | null;
   averageServeTimeMinutes: number | null;
 }> {
+  const scope = doctorScope(clinicId, doctorId);
+
   const servedEntries = await prisma.queueEntry.findMany({
     where: {
-      clinicId,
+      ...scope,
       queueDate: { gte: start, lte: end },
       status: "SERVED",
       calledAt: { not: null },
@@ -99,8 +123,11 @@ async function computeQueueTimeMetrics(
 
 export async function getOverview(
   clinicId: string,
-  input: OverviewQueryInput
+  input: OverviewQueryInput,
+  doctorId?: string
 ): Promise<OverviewStats> {
+  const scope = doctorScope(clinicId, doctorId);
+  const patientScope = patientScopeFor(clinicId, doctorId);
   const { start, end } = getDateBounds(input.date);
 
   const [
@@ -119,44 +146,46 @@ export async function getOverview(
     servedToday,
     cancelledToday,
   ] = await prisma.$transaction([
-    prisma.patient.count({ where: { clinicId } }),
-    prisma.patient.count({ where: { clinicId, deletedAt: null } }),
-    prisma.patient.count({ where: { clinicId, deletedAt: { not: null } } }),
-    prisma.appointment.count({ where: { clinicId } }),
-    prisma.appointment.count({
-      where: { clinicId, appointmentDate: { gte: start, lte: end } },
+    prisma.patient.count({ where: { ...patientScope } }),
+    prisma.patient.count({ where: { ...patientScope, deletedAt: null } }),
+    prisma.patient.count({
+      where: { ...patientScope, deletedAt: { not: null } },
     }),
-    prisma.appointment.count({ where: { clinicId, status: "SCHEDULED" } }),
-    prisma.appointment.count({ where: { clinicId, status: "COMPLETED" } }),
-    prisma.appointment.count({ where: { clinicId, status: "CANCELLED" } }),
-    prisma.visit.count({ where: { clinicId } }),
+    prisma.appointment.count({ where: { ...scope } }),
+    prisma.appointment.count({
+      where: { ...scope, appointmentDate: { gte: start, lte: end } },
+    }),
+    prisma.appointment.count({ where: { ...scope, status: "SCHEDULED" } }),
+    prisma.appointment.count({ where: { ...scope, status: "COMPLETED" } }),
+    prisma.appointment.count({ where: { ...scope, status: "CANCELLED" } }),
+    prisma.visit.count({ where: { ...scope } }),
     prisma.visit.count({
-      where: { clinicId, visitDate: { gte: start, lte: end } },
+      where: { ...scope, visitDate: { gte: start, lte: end } },
     }),
     prisma.queueEntry.count({
       where: {
-        clinicId,
+        ...scope,
         queueDate: { gte: start, lte: end },
         status: "WAITING",
       },
     }),
     prisma.queueEntry.count({
       where: {
-        clinicId,
+        ...scope,
         queueDate: { gte: start, lte: end },
         status: "IN_PROGRESS",
       },
     }),
     prisma.queueEntry.count({
       where: {
-        clinicId,
+        ...scope,
         queueDate: { gte: start, lte: end },
         status: "SERVED",
       },
     }),
     prisma.queueEntry.count({
       where: {
-        clinicId,
+        ...scope,
         queueDate: { gte: start, lte: end },
         status: "CANCELLED",
       },
@@ -187,8 +216,10 @@ export async function getOverview(
 
 export async function getToday(
   clinicId: string,
-  input: TodayQueryInput
+  input: TodayQueryInput,
+  doctorId?: string
 ): Promise<TodayStats> {
+  const scope = doctorScope(clinicId, doctorId);
   const { start, end } = getDateBounds(input.date);
   const dateStr = (input.date ?? new Date().toISOString()).split("T")[0];
 
@@ -205,7 +236,7 @@ export async function getToday(
     queueCancelled,
   ] = await prisma.$transaction([
     prisma.appointment.findMany({
-      where: { clinicId, appointmentDate: { gte: start, lte: end } },
+      where: { ...scope, appointmentDate: { gte: start, lte: end } },
       select: {
         id: true,
         appointmentTime: true,
@@ -219,27 +250,27 @@ export async function getToday(
     }),
     prisma.appointment.count({
       where: {
-        clinicId,
+        ...scope,
         appointmentDate: { gte: start, lte: end },
         status: "SCHEDULED",
       },
     }),
     prisma.appointment.count({
       where: {
-        clinicId,
+        ...scope,
         appointmentDate: { gte: start, lte: end },
         status: "COMPLETED",
       },
     }),
     prisma.appointment.count({
       where: {
-        clinicId,
+        ...scope,
         appointmentDate: { gte: start, lte: end },
         status: "CANCELLED",
       },
     }),
     prisma.visit.findMany({
-      where: { clinicId, visitDate: { gte: start, lte: end } },
+      where: { ...scope, visitDate: { gte: start, lte: end } },
       select: {
         id: true,
         visitDate: true,
@@ -253,32 +284,32 @@ export async function getToday(
       orderBy: { createdAt: "desc" },
     }),
     prisma.queueEntry.count({
-      where: { clinicId, queueDate: { gte: start, lte: end } },
+      where: { ...scope, queueDate: { gte: start, lte: end } },
     }),
     prisma.queueEntry.count({
       where: {
-        clinicId,
+        ...scope,
         queueDate: { gte: start, lte: end },
         status: "WAITING",
       },
     }),
     prisma.queueEntry.count({
       where: {
-        clinicId,
+        ...scope,
         queueDate: { gte: start, lte: end },
         status: "IN_PROGRESS",
       },
     }),
     prisma.queueEntry.count({
       where: {
-        clinicId,
+        ...scope,
         queueDate: { gte: start, lte: end },
         status: "SERVED",
       },
     }),
     prisma.queueEntry.count({
       where: {
-        clinicId,
+        ...scope,
         queueDate: { gte: start, lte: end },
         status: "CANCELLED",
       },
@@ -286,7 +317,7 @@ export async function getToday(
   ]);
 
   const { averageWaitTimeMinutes, averageServeTimeMinutes } =
-    await computeQueueTimeMetrics(clinicId, start, end);
+    await computeQueueTimeMetrics(clinicId, start, end, doctorId);
 
   return {
     date: dateStr,
@@ -319,8 +350,10 @@ export async function getToday(
 
 export async function getQueueDashboard(
   clinicId: string,
-  input: QueueDashboardQueryInput
+  input: QueueDashboardQueryInput,
+  doctorId?: string
 ): Promise<QueueDashboard> {
+  const scope = doctorScope(clinicId, doctorId);
   const { start, end } = getDateBounds(input.date);
   const dateStr = (input.date ?? new Date().toISOString()).split("T")[0];
   const { page = 1, limit = 20 } = input;
@@ -358,7 +391,7 @@ export async function getQueueDashboard(
   ] = await prisma.$transaction([
     prisma.queueEntry.findFirst({
       where: {
-        clinicId,
+        ...scope,
         queueDate: { gte: start, lte: end },
         status: "IN_PROGRESS",
       },
@@ -367,7 +400,7 @@ export async function getQueueDashboard(
     }),
     prisma.queueEntry.findFirst({
       where: {
-        clinicId,
+        ...scope,
         queueDate: { gte: start, lte: end },
         status: "WAITING",
       },
@@ -376,7 +409,7 @@ export async function getQueueDashboard(
     }),
     prisma.queueEntry.findMany({
       where: {
-        clinicId,
+        ...scope,
         queueDate: { gte: start, lte: end },
         status: "WAITING",
       },
@@ -386,32 +419,32 @@ export async function getQueueDashboard(
       take: limit,
     }),
     prisma.queueEntry.count({
-      where: { clinicId, queueDate: { gte: start, lte: end } },
+      where: { ...scope, queueDate: { gte: start, lte: end } },
     }),
     prisma.queueEntry.count({
       where: {
-        clinicId,
+        ...scope,
         queueDate: { gte: start, lte: end },
         status: "WAITING",
       },
     }),
     prisma.queueEntry.count({
       where: {
-        clinicId,
+        ...scope,
         queueDate: { gte: start, lte: end },
         status: "IN_PROGRESS",
       },
     }),
     prisma.queueEntry.count({
       where: {
-        clinicId,
+        ...scope,
         queueDate: { gte: start, lte: end },
         status: "SERVED",
       },
     }),
     prisma.queueEntry.count({
       where: {
-        clinicId,
+        ...scope,
         queueDate: { gte: start, lte: end },
         status: "CANCELLED",
       },
@@ -419,7 +452,7 @@ export async function getQueueDashboard(
   ]);
 
   const { averageWaitTimeMinutes, averageServeTimeMinutes } =
-    await computeQueueTimeMetrics(clinicId, start, end);
+    await computeQueueTimeMetrics(clinicId, start, end, doctorId);
 
   return {
     date: dateStr,
@@ -444,8 +477,10 @@ export async function getQueueDashboard(
 
 export async function getAppointmentsDashboard(
   clinicId: string,
-  input: AppointmentsDashboardQueryInput
+  input: AppointmentsDashboardQueryInput,
+  doctorId?: string
 ): Promise<AppointmentsDashboard> {
+  const scope = doctorScope(clinicId, doctorId);
   const { page = 1, limit = 10 } = input;
   const skip = (page - 1) * limit;
 
@@ -476,7 +511,7 @@ export async function getAppointmentsDashboard(
   ] = await prisma.$transaction([
     prisma.appointment.findMany({
       where: {
-        clinicId,
+        ...scope,
         status: "SCHEDULED",
         appointmentDate: { gte: fromDate, lte: toDate },
       },
@@ -487,7 +522,7 @@ export async function getAppointmentsDashboard(
     }),
     prisma.appointment.findMany({
       where: {
-        clinicId,
+        ...scope,
         status: "COMPLETED",
         appointmentDate: { gte: fromDate, lte: toDate },
       },
@@ -498,7 +533,7 @@ export async function getAppointmentsDashboard(
     }),
     prisma.appointment.findMany({
       where: {
-        clinicId,
+        ...scope,
         status: "CANCELLED",
         appointmentDate: { gte: fromDate, lte: toDate },
       },
@@ -509,21 +544,21 @@ export async function getAppointmentsDashboard(
     }),
     prisma.appointment.count({
       where: {
-        clinicId,
+        ...scope,
         status: "SCHEDULED",
         appointmentDate: { gte: fromDate, lte: toDate },
       },
     }),
     prisma.appointment.count({
       where: {
-        clinicId,
+        ...scope,
         status: "COMPLETED",
         appointmentDate: { gte: fromDate, lte: toDate },
       },
     }),
     prisma.appointment.count({
       where: {
-        clinicId,
+        ...scope,
         status: "CANCELLED",
         appointmentDate: { gte: fromDate, lte: toDate },
       },
@@ -548,8 +583,11 @@ export async function getAppointmentsDashboard(
 
 export async function getPatientsDashboard(
   clinicId: string,
-  input: PatientsDashboardQueryInput
+  input: PatientsDashboardQueryInput,
+  doctorId?: string
 ): Promise<PatientsDashboard> {
+  const scope = doctorScope(clinicId, doctorId);
+  const patientScope = patientScopeFor(clinicId, doctorId);
   const { page = 1, limit = 10 } = input;
   const skip = (page - 1) * limit;
 
@@ -562,19 +600,21 @@ export async function getPatientsDashboard(
     recentlyRegistered,
     recentlyVisitedRaw,
   ] = await prisma.$transaction([
-    prisma.patient.count({ where: { clinicId, deletedAt: null } }),
-    prisma.patient.count({ where: { clinicId, deletedAt: { not: null } } }),
+    prisma.patient.count({ where: { ...patientScope, deletedAt: null } }),
     prisma.patient.count({
-      where: { clinicId, deletedAt: null, gender: "MALE" },
+      where: { ...patientScope, deletedAt: { not: null } },
     }),
     prisma.patient.count({
-      where: { clinicId, deletedAt: null, gender: "FEMALE" },
+      where: { ...patientScope, deletedAt: null, gender: "MALE" },
     }),
     prisma.patient.count({
-      where: { clinicId, deletedAt: null, gender: "OTHER" },
+      where: { ...patientScope, deletedAt: null, gender: "FEMALE" },
+    }),
+    prisma.patient.count({
+      where: { ...patientScope, deletedAt: null, gender: "OTHER" },
     }),
     prisma.patient.findMany({
-      where: { clinicId, deletedAt: null },
+      where: { ...patientScope, deletedAt: null },
       select: {
         id: true,
         fullName: true,
@@ -588,7 +628,7 @@ export async function getPatientsDashboard(
       take: limit,
     }),
     prisma.visit.findMany({
-      where: { clinicId },
+      where: { ...scope },
       select: {
         visitDate: true,
         patient: {
@@ -636,8 +676,11 @@ export async function getPatientsDashboard(
 
 export async function getAnalytics(
   clinicId: string,
-  input: AnalyticsQueryInput
+  input: AnalyticsQueryInput,
+  doctorId?: string
 ): Promise<AnalyticsDashboard> {
+  const scope = doctorScope(clinicId, doctorId);
+  const patientScope = patientScopeFor(clinicId, doctorId);
   const defaults = getDefaultAnalyticsPeriod();
   const fromDate = input.fromDate ?? defaults.fromDate;
   const toDate = input.toDate ?? defaults.toDate;
@@ -657,54 +700,54 @@ export async function getAnalytics(
     appointmentTotal,
   ] = await prisma.$transaction([
     prisma.visit.findMany({
-      where: { clinicId, visitDate: { gte: from, lte: to } },
+      where: { ...scope, visitDate: { gte: from, lte: to } },
       select: { visitDate: true },
       orderBy: { visitDate: "asc" },
     }),
     prisma.appointment.findMany({
-      where: { clinicId, appointmentDate: { gte: from, lte: to } },
+      where: { ...scope, appointmentDate: { gte: from, lte: to } },
       select: { appointmentDate: true },
       orderBy: { appointmentDate: "asc" },
     }),
     prisma.patient.findMany({
-      where: { clinicId, createdAt: { gte: from, lte: to } },
+      where: { ...patientScope, createdAt: { gte: from, lte: to } },
       select: { createdAt: true },
       orderBy: { createdAt: "asc" },
     }),
     prisma.queueEntry.count({
-      where: { clinicId, queueDate: { gte: from, lte: to }, status: "SERVED" },
+      where: { ...scope, queueDate: { gte: from, lte: to }, status: "SERVED" },
     }),
     prisma.queueEntry.count({
       where: {
-        clinicId,
+        ...scope,
         queueDate: { gte: from, lte: to },
         status: "CANCELLED",
       },
     }),
     prisma.queueEntry.count({
-      where: { clinicId, queueDate: { gte: from, lte: to } },
+      where: { ...scope, queueDate: { gte: from, lte: to } },
     }),
     prisma.appointment.count({
       where: {
-        clinicId,
+        ...scope,
         appointmentDate: { gte: from, lte: to },
         status: "COMPLETED",
       },
     }),
     prisma.appointment.count({
       where: {
-        clinicId,
+        ...scope,
         appointmentDate: { gte: from, lte: to },
         status: "CANCELLED",
       },
     }),
     prisma.appointment.count({
-      where: { clinicId, appointmentDate: { gte: from, lte: to } },
+      where: { ...scope, appointmentDate: { gte: from, lte: to } },
     }),
   ]);
 
   const { averageWaitTimeMinutes, averageServeTimeMinutes } =
-    await computeQueueTimeMetrics(clinicId, from, to);
+    await computeQueueTimeMetrics(clinicId, from, to, doctorId);
 
   // Aggregate visits per day
   const visitDayMap = new Map<string, number>();

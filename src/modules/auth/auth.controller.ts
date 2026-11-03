@@ -7,9 +7,16 @@ import asyncHandler from "../../shared/utils/asyncHandler";
 import {
   loginSchema,
   refreshTokenSchema,
+  logoutSchema,
   changePasswordSchema,
 } from "./auth.validation";
 import { AppError, HttpStatus } from "../../shared/errors/AppError";
+import type { SessionMeta } from "./auth.types";
+
+// Device info stored with each refresh token (useful to spot odd sessions)
+function sessionMeta(req: Request): SessionMeta {
+  return { userAgent: req.get("user-agent") ?? undefined, ip: req.ip };
+}
 
 // ---------------------------------------------------------------------------
 // POST /auth/login
@@ -17,7 +24,7 @@ import { AppError, HttpStatus } from "../../shared/errors/AppError";
 
 export const login = asyncHandler(async (req: Request, res: Response) => {
   const input = loginSchema.parse(req.body);
-  const result = await AuthService.login(input);
+  const result = await AuthService.login(input, sessionMeta(req));
 
   ApiResponse.ok(res, result, "Login successful");
 });
@@ -28,7 +35,10 @@ export const login = asyncHandler(async (req: Request, res: Response) => {
 
 export const refresh = asyncHandler(async (req: Request, res: Response) => {
   const input = refreshTokenSchema.parse(req.body);
-  const tokens = await AuthService.refreshTokens(input.refreshToken);
+  const tokens = await AuthService.refreshTokens(
+    input.refreshToken,
+    sessionMeta(req)
+  );
 
   ApiResponse.ok(res, tokens, "Tokens refreshed successfully");
 });
@@ -37,7 +47,14 @@ export const refresh = asyncHandler(async (req: Request, res: Response) => {
 // POST /auth/logout
 // ---------------------------------------------------------------------------
 
-export const logout = asyncHandler(async (_req: Request, res: Response) => {
+export const logout = asyncHandler(async (req: Request, res: Response) => {
+  if (!req.user) {
+    throw new AppError("Unauthenticated", HttpStatus.UNAUTHORIZED);
+  }
+
+  const input = logoutSchema.parse(req.body ?? {});
+  await AuthService.logout(req.user.sub, input);
+
   ApiResponse.ok(res, null, "Logged out successfully");
 });
 
@@ -66,8 +83,13 @@ export const changePassword = asyncHandler(
     }
 
     const input = changePasswordSchema.parse(req.body);
-    await AuthService.changePassword(req.user.sub, input);
+    // Every other session is ended; this one continues with the new tokens.
+    const tokens = await AuthService.changePassword(
+      req.user.sub,
+      input,
+      sessionMeta(req)
+    );
 
-    ApiResponse.ok(res, null, "Password changed successfully");
+    ApiResponse.ok(res, { tokens }, "Password changed successfully");
   }
 );

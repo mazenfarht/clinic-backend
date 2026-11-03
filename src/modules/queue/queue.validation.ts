@@ -3,8 +3,13 @@
 import { z } from "zod";
 import { QueueStatus } from "@prisma/client";
 
+const doctorIdField = z.string().uuid("Invalid doctor ID format");
+
 export const checkInSchema = z.object({
   patientId: z.string().uuid("Invalid patient ID format"),
+  // Which doctor's queue to join. Optional when the appointment already has a
+  // doctor, and ignored for DOCTOR logins (they always use their own queue).
+  doctorId: doctorIdField.optional(),
   appointmentId: z.string().uuid("Invalid appointment ID format").optional(),
   chiefComplaint: z
     .string()
@@ -19,6 +24,7 @@ export const checkInSchema = z.object({
 });
 
 export const reserveSlotSchema = z.object({
+  doctorId: doctorIdField.optional(),
   reservedFor: z
     .string()
     .trim()
@@ -38,6 +44,7 @@ export const reserveSlotSchema = z.object({
 
 export const queueQuerySchema = z.object({
   status: z.nativeEnum(QueueStatus).optional(),
+  doctorId: doctorIdField.optional(),
   date: z
     .string()
     .trim()
@@ -63,6 +70,20 @@ export const queueQuerySchema = z.object({
 
 export const queueEntryIdSchema = z.object({
   id: z.string().uuid("Invalid queue entry ID format"),
+});
+
+// Body / query that only carries an optional doctor (call-next, reset, status, statistics)
+export const doctorScopeSchema = z.object({
+  doctorId: doctorIdField.optional(),
+});
+
+export const queueStatisticsQuerySchema = z.object({
+  doctorId: doctorIdField.optional(),
+  date: z
+    .string()
+    .trim()
+    .regex(/^\d{4}-\d{2}-\d{2}$/, "Date must be in YYYY-MM-DD format")
+    .optional(),
 });
 
 export const recallSchema = z.object({

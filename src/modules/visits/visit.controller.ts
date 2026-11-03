@@ -12,6 +12,12 @@ import {
   visitIdSchema,
   patientIdParamSchema,
 } from "./visit.validation";
+import { ForbiddenError } from "../../shared/errors/AppError";
+import {
+  getLockedDoctorId,
+  resolveDoctorId,
+  assertVisitAccess,
+} from "../doctors/doctor-scope";
 
 // ---------------------------------------------------------------------------
 // Resolve authenticated clinic and user from token
@@ -31,7 +37,17 @@ function resolveAuth(req: Request): { clinicId: string; userId: string } {
 export const createVisit = asyncHandler(async (req: Request, res: Response) => {
   const { clinicId, userId } = resolveAuth(req);
   const input = createVisitSchema.parse(req.body);
-  const visit = await VisitService.createVisit(clinicId, userId, input);
+  // This route is DOCTOR-only: the visit always belongs to the logged-in doctor
+  const doctorId = await getLockedDoctorId(req);
+  if (!doctorId) {
+    throw new ForbiddenError("Only a doctor can create a visit");
+  }
+  const visit = await VisitService.createVisit(
+    clinicId,
+    userId,
+    input,
+    doctorId
+  );
 
   ApiResponse.created(res, visit, "Visit created successfully");
 });
@@ -43,7 +59,11 @@ export const createVisit = asyncHandler(async (req: Request, res: Response) => {
 export const listVisits = asyncHandler(async (req: Request, res: Response) => {
   const { clinicId } = resolveAuth(req);
   const filters = visitQuerySchema.parse(req.query);
-  const result = await VisitService.listVisits(clinicId, filters);
+  const doctorId = await resolveDoctorId(req, filters.doctorId);
+  const result = await VisitService.listVisits(clinicId, {
+    ...filters,
+    doctorId,
+  });
 
   ApiResponse.paginated(
     res,
@@ -61,6 +81,7 @@ export const getVisitById = asyncHandler(
   async (req: Request, res: Response) => {
     const { clinicId } = resolveAuth(req);
     const { id } = visitIdSchema.parse(req.params);
+    await assertVisitAccess(req, id);
     const visit = await VisitService.getVisitById(id, clinicId);
 
     ApiResponse.ok(res, visit, "Visit retrieved successfully");
@@ -76,11 +97,11 @@ export const listVisitsByPatient = asyncHandler(
     const { clinicId } = resolveAuth(req);
     const { patientId } = patientIdParamSchema.parse(req.params);
     const filters = visitQuerySchema.parse(req.query);
-    const result = await VisitService.listVisitsByPatient(
-      patientId,
-      clinicId,
-      filters
-    );
+    const doctorId = await resolveDoctorId(req, filters.doctorId);
+    const result = await VisitService.listVisitsByPatient(patientId, clinicId, {
+      ...filters,
+      doctorId,
+    });
 
     ApiResponse.paginated(
       res,
@@ -98,6 +119,7 @@ export const listVisitsByPatient = asyncHandler(
 export const updateVisit = asyncHandler(async (req: Request, res: Response) => {
   const { clinicId, userId } = resolveAuth(req);
   const { id } = visitIdSchema.parse(req.params);
+  await assertVisitAccess(req, id);
   const input = updateVisitSchema.parse(req.body);
   const visit = await VisitService.updateVisit(id, clinicId, userId, input);
 
@@ -111,6 +133,7 @@ export const updateVisit = asyncHandler(async (req: Request, res: Response) => {
 export const deleteVisit = asyncHandler(async (req: Request, res: Response) => {
   const { clinicId } = resolveAuth(req);
   const { id } = visitIdSchema.parse(req.params);
+  await assertVisitAccess(req, id);
   await VisitService.deleteVisit(id, clinicId);
 
   ApiResponse.ok(res, null, "Visit deleted successfully");

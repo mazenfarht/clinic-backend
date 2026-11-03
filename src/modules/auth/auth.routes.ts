@@ -3,14 +3,15 @@
 import { Router } from "express";
 import * as AuthController from "./auth.controller";
 import { authMiddleware } from "./auth.middleware";
+import { authLimiter } from "../../middleware/rateLimiter.middleware";
 const router = Router();
 
 // ---------------------------------------------------------------------------
 // Public routes — no authentication required
 // ---------------------------------------------------------------------------
 
-router.post("/login", AuthController.login);
-router.post("/refresh", AuthController.refresh);
+router.post("/login", authLimiter, AuthController.login);
+router.post("/refresh", authLimiter, AuthController.refresh);
 
 // ---------------------------------------------------------------------------
 // Protected routes — valid access token required

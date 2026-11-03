@@ -13,6 +13,7 @@ import {
   patientsDashboardQuerySchema,
   analyticsQuerySchema,
 } from "./dashboard.validation";
+import { resolveDoctorId } from "../doctors/doctor-scope";
 
 // ---------------------------------------------------------------------------
 // Resolve authenticated clinic from token
@@ -32,8 +33,8 @@ function resolveAuth(req: Request): { clinicId: string; userId: string } {
 export const getOverview = asyncHandler(async (req: Request, res: Response) => {
   const { clinicId } = resolveAuth(req);
   const input = overviewQuerySchema.parse(req.query);
-  const data = await DashboardService.getOverview(clinicId, input);
-  console.log("Query:", req.query); // في الـ controller
+  const doctorId = await resolveDoctorId(req, input.doctorId);
+  const data = await DashboardService.getOverview(clinicId, input, doctorId);
   ApiResponse.ok(res, data, "Overview retrieved successfully");
 });
 
@@ -44,7 +45,8 @@ export const getOverview = asyncHandler(async (req: Request, res: Response) => {
 export const getToday = asyncHandler(async (req: Request, res: Response) => {
   const { clinicId } = resolveAuth(req);
   const input = todayQuerySchema.parse(req.query);
-  const data = await DashboardService.getToday(clinicId, input);
+  const doctorId = await resolveDoctorId(req, input.doctorId);
+  const data = await DashboardService.getToday(clinicId, input, doctorId);
 
   ApiResponse.ok(res, data, "Today's dashboard retrieved successfully");
 });
@@ -57,7 +59,12 @@ export const getQueueDashboard = asyncHandler(
   async (req: Request, res: Response) => {
     const { clinicId } = resolveAuth(req);
     const input = queueDashboardQuerySchema.parse(req.query);
-    const data = await DashboardService.getQueueDashboard(clinicId, input);
+    const doctorId = await resolveDoctorId(req, input.doctorId);
+    const data = await DashboardService.getQueueDashboard(
+      clinicId,
+      input,
+      doctorId
+    );
 
     ApiResponse.ok(res, data, "Queue dashboard retrieved successfully");
   }
@@ -71,9 +78,11 @@ export const getAppointmentsDashboard = asyncHandler(
   async (req: Request, res: Response) => {
     const { clinicId } = resolveAuth(req);
     const input = appointmentsDashboardQuerySchema.parse(req.query);
+    const doctorId = await resolveDoctorId(req, input.doctorId);
     const data = await DashboardService.getAppointmentsDashboard(
       clinicId,
-      input
+      input,
+      doctorId
     );
 
     ApiResponse.ok(res, data, "Appointments dashboard retrieved successfully");
@@ -88,7 +97,12 @@ export const getPatientsDashboard = asyncHandler(
   async (req: Request, res: Response) => {
     const { clinicId } = resolveAuth(req);
     const input = patientsDashboardQuerySchema.parse(req.query);
-    const data = await DashboardService.getPatientsDashboard(clinicId, input);
+    const doctorId = await resolveDoctorId(req, input.doctorId);
+    const data = await DashboardService.getPatientsDashboard(
+      clinicId,
+      input,
+      doctorId
+    );
 
     ApiResponse.ok(res, data, "Patients dashboard retrieved successfully");
   }
@@ -102,7 +116,8 @@ export const getAnalytics = asyncHandler(
   async (req: Request, res: Response) => {
     const { clinicId } = resolveAuth(req);
     const input = analyticsQuerySchema.parse(req.query);
-    const data = await DashboardService.getAnalytics(clinicId, input);
+    const doctorId = await resolveDoctorId(req, input.doctorId);
+    const data = await DashboardService.getAnalytics(clinicId, input, doctorId);
 
     ApiResponse.ok(res, data, "Analytics retrieved successfully");
   }

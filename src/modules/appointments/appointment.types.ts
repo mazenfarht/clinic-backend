@@ -6,6 +6,7 @@ export interface AppointmentFilters {
   search?: string;
   status?: AppointmentStatus;
   patientId?: string;
+  doctorId?: string;
   date?: string;
   fromDate?: string;
   toDate?: string;
@@ -17,6 +18,7 @@ export interface AppointmentSummary {
   id: string;
   clinicId: string;
   patientId: string;
+  doctorId: string | null;
   visitId: string | null;
   appointmentDate: Date;
   appointmentTime: Date;
@@ -30,6 +32,11 @@ export interface AppointmentSummary {
     phone: string;
     mrn: string;
   };
+  doctor: {
+    id: string;
+    specialty: string;
+    user: { fullName: string };
+  } | null;
   createdBy: {
     id: string;
     fullName: string;

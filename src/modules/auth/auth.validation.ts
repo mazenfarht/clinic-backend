@@ -26,11 +26,24 @@ export const loginSchema = z.object({
     .string()
     .min(1, "Password is required")
     .min(8, "Password must be at least 8 characters"),
+
+  // Only needed when the same email exists in more than one clinic
+  clinicId: z.string().uuid("Invalid clinic ID format").optional(),
 });
 
 export const refreshTokenSchema = z.object({
   refreshToken: z.string().min(1, "Refresh token is required"),
 });
+
+// POST /auth/logout — revoke one session (refreshToken) or all of them
+export const logoutSchema = z
+  .object({
+    refreshToken: z.string().min(1).optional(),
+    allDevices: z.boolean().optional(),
+  })
+  .refine((d) => d.refreshToken || d.allDevices, {
+    message: "Provide refreshToken, or set allDevices to true",
+  });
 
 export const changePasswordSchema = z
   .object({
@@ -50,5 +63,6 @@ export const changePasswordSchema = z
   });
 
 export type LoginInput = z.infer<typeof loginSchema>;
+export type LogoutInput = z.infer<typeof logoutSchema>;
 export type RefreshTokenInput = z.infer<typeof refreshTokenSchema>;
 export type ChangePasswordInput = z.infer<typeof changePasswordSchema>;

@@ -24,6 +24,7 @@ export interface ClinicSettingsResponse {
   appointmentDuration: number;
   gracePeriod: number;
   delayThreshold: number;
+  waitingScreenMode: "NUMBERS" | "NAMES";
   createdAt: Date;
   updatedAt: Date;
   clinic: {
@@ -51,5 +52,6 @@ export interface UpdateClinicSettingsPayload {
     appointmentDuration?: number;
     gracePeriod?: number;
     delayThreshold?: number;
+    waitingScreenMode?: "NUMBERS" | "NAMES";
   };
 }

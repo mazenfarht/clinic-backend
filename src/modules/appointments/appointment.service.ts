@@ -1,5 +1,6 @@
 // src/modules/appointments/appointment.service.ts
 
+import { Prisma } from "@prisma/client";
 import prisma from "../../config/database";
 import {
   NotFoundError,
@@ -31,6 +32,7 @@ const appointmentSummarySelect = {
   id: true,
   clinicId: true,
   patientId: true,
+  doctorId: true,
   visitId: true,
   appointmentDate: true,
   appointmentTime: true,
@@ -44,6 +46,13 @@ const appointmentSummarySelect = {
       fullName: true,
       phone: true,
       mrn: true,
+    },
+  },
+  doctor: {
+    select: {
+      id: true,
+      specialty: true,
+      user: { select: { fullName: true } },
     },
   },
   createdBy: {
@@ -120,8 +129,31 @@ async function assertPatientExists(
   }
 }
 
+// The doctor must belong to this clinic and have an active login account.
+async function assertDoctorExists(
+  doctorId: string,
+  clinicId: string
+): Promise<void> {
+  const doctor = await prisma.doctor.findFirst({
+    where: { id: doctorId, clinicId, user: { isActive: true } },
+    select: { id: true },
+  });
+
+  if (!doctor) {
+    throw new NotFoundError("Doctor not found or inactive");
+  }
+}
+
+function isUniqueViolation(err: unknown): boolean {
+  return (
+    err instanceof Prisma.PrismaClientKnownRequestError && err.code === "P2002"
+  );
+}
+
+// Conflicts are per DOCTOR: two doctors can see patients at the same time.
 async function assertNoTimeConflict(
   clinicId: string,
+  doctorId: string,
   appointmentDate: string,
   appointmentTime: string,
   excludeId?: string
@@ -131,6 +163,7 @@ async function assertNoTimeConflict(
   const existing = await prisma.appointment.findFirst({
     where: {
       clinicId,
+      doctorId,
       appointmentDate: dateTime,
       appointmentTime: dateTime,
       status: { in: STATUSES_BLOCKING_CONFLICT },
@@ -187,8 +220,10 @@ export async function createAppointment(
   input: CreateAppointmentInput
 ): Promise<AppointmentSummary> {
   await assertPatientExists(input.patientId, clinicId);
+  await assertDoctorExists(input.doctorId, clinicId);
   await assertNoTimeConflict(
     clinicId,
+    input.doctorId,
     input.appointmentDate,
     input.appointmentTime
   );
@@ -198,21 +233,32 @@ export async function createAppointment(
     input.appointmentTime
   );
 
-  const appointment = await prisma.appointment.create({
-    data: {
-      clinicId,
-      createdById,
-      updatedById: createdById,
-      patientId: input.patientId,
-      appointmentDate: dateTime,
-      appointmentTime: dateTime,
-      status: "SCHEDULED",
-      notes: input.notes ?? null,
-    },
-    select: appointmentSummarySelect,
-  });
+  try {
+    const appointment = await prisma.appointment.create({
+      data: {
+        clinicId,
+        createdById,
+        updatedById: createdById,
+        patientId: input.patientId,
+        doctorId: input.doctorId,
+        appointmentDate: dateTime,
+        appointmentTime: dateTime,
+        status: "SCHEDULED",
+        notes: input.notes ?? null,
+      },
+      select: appointmentSummarySelect,
+    });
 
-  return appointment as AppointmentSummary;
+    return appointment as AppointmentSummary;
+  } catch (err) {
+    // Lost a race for the same doctor/slot — the partial unique index won.
+    if (isUniqueViolation(err)) {
+      throw new ConflictError(
+        `This doctor already has an appointment at ${input.appointmentTime} on ${input.appointmentDate}`
+      );
+    }
+    throw err;
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -249,6 +295,7 @@ export async function listAppointments(
     search,
     status,
     patientId,
+    doctorId,
     date,
     fromDate,
     toDate,
@@ -264,6 +311,7 @@ export async function listAppointments(
     clinicId,
     ...(status ? { status } : {}),
     ...(patientId ? { patientId } : {}),
+    ...(doctorId ? { doctorId } : {}),
     ...dateRangeFilter,
     ...(search
       ? {
@@ -313,10 +361,14 @@ export async function updateAppointment(
     );
   }
 
-  if (input.appointmentDate || input.appointmentTime) {
+  if (input.doctorId || input.appointmentDate || input.appointmentTime) {
     const current = await prisma.appointment.findUnique({
       where: { id },
-      select: { appointmentDate: true, appointmentTime: true },
+      select: {
+        doctorId: true,
+        appointmentDate: true,
+        appointmentTime: true,
+      },
     });
 
     if (!current) throw new NotFoundError("Appointment not found");
@@ -330,22 +382,43 @@ export async function updateAppointment(
     const newDate = input.appointmentDate ?? currentDate;
     const newTime = input.appointmentTime ?? currentTime;
 
-    await assertNoTimeConflict(clinicId, newDate, newTime, id);
+    const newDoctorId = input.doctorId ?? current.doctorId;
+    if (!newDoctorId) {
+      throw new BadRequestError(
+        "This appointment has no doctor assigned; please provide doctorId"
+      );
+    }
+
+    if (input.doctorId) {
+      await assertDoctorExists(input.doctorId, clinicId);
+    }
+
+    await assertNoTimeConflict(clinicId, newDoctorId, newDate, newTime, id);
 
     const dateTime = buildAppointmentDateTime(newDate, newTime);
 
-    const appointment = await prisma.appointment.update({
-      where: { id },
-      data: {
-        updatedById,
-        appointmentDate: dateTime,
-        appointmentTime: dateTime,
-        ...(input.notes !== undefined ? { notes: input.notes } : {}),
-      },
-      select: appointmentSummarySelect,
-    });
+    try {
+      const appointment = await prisma.appointment.update({
+        where: { id },
+        data: {
+          updatedById,
+          doctorId: newDoctorId,
+          appointmentDate: dateTime,
+          appointmentTime: dateTime,
+          ...(input.notes !== undefined ? { notes: input.notes } : {}),
+        },
+        select: appointmentSummarySelect,
+      });
 
-    return appointment as AppointmentSummary;
+      return appointment as AppointmentSummary;
+    } catch (err) {
+      if (isUniqueViolation(err)) {
+        throw new ConflictError(
+          `This doctor already has an appointment at ${newTime} on ${newDate}`
+        );
+      }
+      throw err;
+    }
   }
 
   const appointment = await prisma.appointment.update({

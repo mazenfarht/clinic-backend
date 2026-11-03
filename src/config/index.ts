@@ -56,7 +56,7 @@ function buildConfig() {
 
     jwt: Object.freeze({
       secret: requireEnv("JWT_SECRET"),
-      expiresIn: optionalEnv("JWT_EXPIRES_IN", "7d"),
+      expiresIn: optionalEnv("JWT_EXPIRES_IN", "15m"),
       refreshSecret: requireEnv("JWT_REFRESH_SECRET"),
       refreshExpiresIn: optionalEnv("JWT_REFRESH_EXPIRES_IN", "30d"),
     }),
@@ -71,7 +71,14 @@ function buildConfig() {
     }),
 
     cors: Object.freeze({
-      origin: optionalEnv("CORS_ORIGIN", "http://localhost:3000"),
+      origin: optionalEnv("CORS_ORIGIN", "http://localhost:3000")
+        .split(",")
+        .map((o) => o.trim())
+        .filter(Boolean),
+    }),
+
+    clinic: Object.freeze({
+      timezone: optionalEnv("CLINIC_TIMEZONE", "Africa/Cairo"),
     }),
 
     logs: Object.freeze({

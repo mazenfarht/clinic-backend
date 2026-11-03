@@ -120,7 +120,8 @@ async function assertPatientExists(
 async function assertAppointmentValid(
   appointmentId: string,
   patientId: string,
-  clinicId: string
+  clinicId: string,
+  doctorId: string
 ): Promise<void> {
   const appointment = await prisma.appointment.findFirst({
     where: {
@@ -128,13 +129,17 @@ async function assertAppointmentValid(
       clinicId,
       patientId,
     },
-    select: { id: true, visitId: true, status: true },
+    select: { id: true, visitId: true, status: true, doctorId: true },
   });
 
   if (!appointment) {
     throw new NotFoundError(
       "Appointment not found or does not belong to this patient"
     );
+  }
+
+  if (appointment.doctorId && appointment.doctorId !== doctorId) {
+    throw new BadRequestError("This appointment belongs to another doctor");
   }
 
   if (appointment.status === "CANCELLED") {
@@ -148,15 +153,20 @@ async function assertAppointmentValid(
 
 async function assertQueueEntryValid(
   queueEntryId: string,
-  clinicId: string
+  clinicId: string,
+  doctorId: string
 ): Promise<void> {
   const entry = await prisma.queueEntry.findFirst({
     where: { id: queueEntryId, clinicId },
-    select: { id: true, visitId: true },
+    select: { id: true, visitId: true, doctorId: true },
   });
 
   if (!entry) {
     throw new NotFoundError("Queue entry not found");
+  }
+
+  if (entry.doctorId && entry.doctorId !== doctorId) {
+    throw new BadRequestError("This queue entry belongs to another doctor");
   }
 
   if (entry.visitId) {
@@ -187,7 +197,8 @@ async function findVisitOrThrow(
 export async function createVisit(
   clinicId: string,
   createdById: string,
-  input: CreateVisitInput
+  input: CreateVisitInput,
+  doctorId: string
 ): Promise<VisitDetail> {
   await assertPatientExists(input.patientId, clinicId);
 
@@ -195,12 +206,13 @@ export async function createVisit(
     await assertAppointmentValid(
       input.appointmentId,
       input.patientId,
-      clinicId
+      clinicId,
+      doctorId
     );
   }
 
   if (input.queueEntryId) {
-    await assertQueueEntryValid(input.queueEntryId, clinicId);
+    await assertQueueEntryValid(input.queueEntryId, clinicId, doctorId);
   }
 
   const visitDate = input.visitDate
@@ -208,12 +220,14 @@ export async function createVisit(
     : new Date(new Date().setUTCHours(0, 0, 0, 0));
 
   const existingVisit = await prisma.visit.findFirst({
-    where: { clinicId, patientId: input.patientId, visitDate },
+    where: { clinicId, patientId: input.patientId, visitDate, doctorId },
     select: { id: true },
   });
 
   if (existingVisit) {
-    throw new ConflictError("Patient already has a visit record for this date");
+    throw new ConflictError(
+      "Patient already has a visit record with this doctor for this date"
+    );
   }
 
   const visit = await prisma.$transaction(async (tx) => {
@@ -221,6 +235,7 @@ export async function createVisit(
       data: {
         clinicId,
         patientId: input.patientId,
+        doctorId,
         createdById,
         updatedById: createdById,
         visitDate,
@@ -291,6 +306,7 @@ export async function listVisits(
   const {
     search,
     patientId,
+    doctorId,
     createdById,
     date,
     fromDate,
@@ -307,6 +323,7 @@ export async function listVisits(
   const where = {
     clinicId,
     ...(patientId ? { patientId } : {}),
+    ...(doctorId ? { doctorId } : {}),
     ...(createdById ? { createdById } : {}),
     ...dateRangeFilter,
     ...(search
