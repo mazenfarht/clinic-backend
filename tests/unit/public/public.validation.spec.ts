@@ -14,13 +14,39 @@ describe("clinicIdParamSchema", () => {
   });
 });
 
+const DOCTOR_ID = "22222222-2222-4222-8222-222222222222";
+
+function futureDate(days: number): string {
+  const d = new Date();
+  d.setDate(d.getDate() + days);
+  return d.toISOString().split("T")[0];
+}
+
 describe("availabilityQuerySchema", () => {
   it("requires a valid YYYY-MM-DD date", () => {
     expect(
-      availabilityQuerySchema.safeParse({ date: "2026-01-01" }).success
+      availabilityQuerySchema.safeParse({
+        doctorId: DOCTOR_ID,
+        date: futureDate(1),
+      }).success
     ).toBe(true);
     expect(
-      availabilityQuerySchema.safeParse({ date: "01/01/2026" }).success
+      availabilityQuerySchema.safeParse({
+        doctorId: DOCTOR_ID,
+        date: "01/01/2026",
+      }).success
+    ).toBe(false);
+  });
+
+  it("requires a doctorId", () => {
+    expect(
+      availabilityQuerySchema.safeParse({ date: futureDate(1) }).success
+    ).toBe(false);
+    expect(
+      availabilityQuerySchema.safeParse({
+        doctorId: "not-a-uuid",
+        date: futureDate(1),
+      }).success
     ).toBe(false);
   });
 });
@@ -64,10 +90,18 @@ describe("publicRegisterPatientSchema", () => {
 
 describe("publicBookAppointmentSchema", () => {
   const base = {
-    patientId: "11111111-1111-1111-1111-111111111111",
-    appointmentDate: "2026-01-01",
+    patientId: "11111111-1111-4111-8111-111111111111",
+    doctorId: DOCTOR_ID,
+    appointmentDate: futureDate(1),
     appointmentTime: "09:00",
   };
+
+  it("requires a doctorId", () => {
+    const { doctorId: _omit, ...withoutDoctor } = base;
+    expect(publicBookAppointmentSchema.safeParse(withoutDoctor).success).toBe(
+      false
+    );
+  });
 
   it("accepts a valid booking payload", () => {
     expect(publicBookAppointmentSchema.safeParse(base).success).toBe(true);

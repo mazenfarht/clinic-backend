@@ -7,6 +7,7 @@ import {
   createClinicSettings,
   deleteClinicCascade,
   futureDateStr,
+  futureOpenDateStr,
   TestClinic,
   TestUser,
 } from "../helpers/factories";
@@ -42,28 +43,28 @@ describe("Public module (no authentication required)", () => {
     it("returns 404 for an inactive/non-existent clinic", async () => {
       const res = await request(app)
         .get(`/api/v1/public/clinics/${inactiveClinic.id}/availability`)
-        .query({ date: futureDateStr(1) });
+        .query({ doctorId: doctor.doctorId, date: futureDateStr(1) });
       expect(res.status).toBe(404);
     });
 
     it("rejects a malformed date query", async () => {
       const res = await request(app)
         .get(`/api/v1/public/clinics/${clinic.id}/availability`)
-        .query({ date: "not-a-date" });
+        .query({ doctorId: doctor.doctorId, date: "not-a-date" });
       expect(res.status).toBe(400);
     });
 
     it("rejects a past date", async () => {
       const res = await request(app)
         .get(`/api/v1/public/clinics/${clinic.id}/availability`)
-        .query({ date: "2000-01-01" });
+        .query({ doctorId: doctor.doctorId, date: "2000-01-01" });
       expect(res.status).toBe(400);
     });
 
     it("returns available slots for a valid future date", async () => {
       const res = await request(app)
         .get(`/api/v1/public/clinics/${clinic.id}/availability`)
-        .query({ date: futureDateStr(2) });
+        .query({ doctorId: doctor.doctorId, date: futureDateStr(2) });
       expect(res.status).toBe(200);
       expect(res.body.data).toHaveProperty("isOpen");
       expect(res.body.data).toHaveProperty("availableSlots");
@@ -138,6 +139,7 @@ describe("Public module (no authentication required)", () => {
         .post(`/api/v1/public/clinics/${clinic.id}/appointments`)
         .send({
           patientId: patient.id,
+          doctorId: doctor.doctorId,
           appointmentDate: "2000-01-01",
           appointmentTime: "09:00",
         });
@@ -148,8 +150,9 @@ describe("Public module (no authentication required)", () => {
       const res = await request(app)
         .post(`/api/v1/public/clinics/${clinic.id}/appointments`)
         .send({
-          patientId: "11111111-1111-1111-1111-111111111111",
-          appointmentDate: futureDateStr(3),
+          patientId: "11111111-1111-4111-8111-111111111111",
+          doctorId: doctor.doctorId,
+          appointmentDate: futureOpenDateStr(3),
           appointmentTime: "09:00",
         });
       expect(res.status).toBe(404);
@@ -161,7 +164,8 @@ describe("Public module (no authentication required)", () => {
         .post(`/api/v1/public/clinics/${clinic.id}/appointments`)
         .send({
           patientId: patient.id,
-          appointmentDate: futureDateStr(4),
+          doctorId: doctor.doctorId,
+          appointmentDate: futureOpenDateStr(4),
           appointmentTime: "23:30",
         });
       expect(res.status).toBe(400);
@@ -173,7 +177,8 @@ describe("Public module (no authentication required)", () => {
         .post(`/api/v1/public/clinics/${clinic.id}/appointments`)
         .send({
           patientId: patient.id,
-          appointmentDate: futureDateStr(5),
+          doctorId: doctor.doctorId,
+          appointmentDate: futureOpenDateStr(5),
           appointmentTime: "10:00",
         });
       expect(res.status).toBe(201);
@@ -187,7 +192,8 @@ describe("Public module (no authentication required)", () => {
         .post(`/api/v1/public/clinics/${clinic.id}/appointments`)
         .send({
           patientId: patient.id,
-          appointmentDate: futureDateStr(6),
+          doctorId: doctor.doctorId,
+          appointmentDate: futureOpenDateStr(6),
           appointmentTime: "10:00",
         });
 
@@ -195,7 +201,8 @@ describe("Public module (no authentication required)", () => {
         .post(`/api/v1/public/clinics/${clinic.id}/appointments`)
         .send({
           patientId: patient.id,
-          appointmentDate: futureDateStr(6),
+          doctorId: doctor.doctorId,
+          appointmentDate: futureOpenDateStr(6),
           appointmentTime: "11:00",
         });
       expect(res.status).toBe(409);
@@ -209,7 +216,8 @@ describe("Public module (no authentication required)", () => {
         .post(`/api/v1/public/clinics/${clinic.id}/appointments`)
         .send({
           patientId: patientA.id,
-          appointmentDate: futureDateStr(7),
+          doctorId: doctor.doctorId,
+          appointmentDate: futureOpenDateStr(7),
           appointmentTime: "10:30",
         });
 
@@ -217,7 +225,8 @@ describe("Public module (no authentication required)", () => {
         .post(`/api/v1/public/clinics/${clinic.id}/appointments`)
         .send({
           patientId: patientB.id,
-          appointmentDate: futureDateStr(7),
+          doctorId: doctor.doctorId,
+          appointmentDate: futureOpenDateStr(7),
           appointmentTime: "10:30",
         });
       expect(res.status).toBe(409);

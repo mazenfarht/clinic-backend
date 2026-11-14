@@ -9,7 +9,7 @@ describe("checkInSchema", () => {
   it("accepts a minimal valid payload", () => {
     expect(
       checkInSchema.safeParse({
-        patientId: "11111111-1111-1111-1111-111111111111",
+        patientId: "11111111-1111-4111-8111-111111111111",
       }).success
     ).toBe(true);
   });
@@ -21,7 +21,7 @@ describe("checkInSchema", () => {
   it("rejects a non-UUID appointmentId when provided", () => {
     expect(
       checkInSchema.safeParse({
-        patientId: "11111111-1111-1111-1111-111111111111",
+        patientId: "11111111-1111-4111-8111-111111111111",
         appointmentId: "xyz",
       }).success
     ).toBe(false);

@@ -4,7 +4,11 @@ import type { Request, Response, NextFunction } from "express";
 import jwt from "jsonwebtoken";
 import config from "../../config";
 import prisma from "../../config/database";
-import { AppError, UnauthorizedError } from "../../shared/errors/AppError";
+import {
+  AppError,
+  ForbiddenError,
+  UnauthorizedError,
+} from "../../shared/errors/AppError";
 import type { JwtAccessPayload } from "./auth.types";
 
 // ---------------------------------------------------------------------------
@@ -64,7 +68,7 @@ export async function authMiddleware(
     }
 
     if (!user.isActive) {
-      throw new UnauthorizedError("Your account has been deactivated");
+      throw new ForbiddenError("Your account has been deactivated");
     }
 
     if (payload.tv !== user.tokenVersion) {

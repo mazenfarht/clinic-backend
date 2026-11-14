@@ -18,6 +18,9 @@ export interface TestUser {
   email: string;
   role: Role;
   plainPassword: string;
+  // Doctor profile id (only for DOCTOR users). Appointments, queue entries and
+  // visits are scoped per doctor profile, not per user.
+  doctorId?: string;
 }
 
 export async function createClinic(
@@ -65,48 +68,91 @@ export async function createUser(
     },
   });
 
+  // A DOCTOR login needs a linked Doctor profile; without it every
+  // doctor-scoped endpoint answers 403 ("No doctor profile is linked").
+  let doctorId: string | undefined;
+  if (user.role === "DOCTOR") {
+    const doctor = await prisma.doctor.create({
+      data: { clinicId, userId: user.id, specialty: "General Medicine" },
+    });
+    doctorId = doctor.id;
+  }
+
   return {
     id: user.id,
     clinicId: user.clinicId,
     email: user.email,
     role: user.role,
     plainPassword,
+    doctorId,
   };
 }
 
-export function signAccessToken(user: {
-  id: string;
-  clinicId: string;
-  role: Role;
-}): string {
+// The access token carries the user's tokenVersion (`tv`); the auth middleware
+// rejects the token when it no longer matches the database. New users start at
+// tokenVersion 0.
+export function signAccessToken(
+  user: {
+    id: string;
+    clinicId: string;
+    role: Role;
+  },
+  tokenVersion = 0
+): string {
   return jwt.sign(
-    { sub: user.id, clinicId: user.clinicId, role: user.role, type: "access" },
+    {
+      sub: user.id,
+      clinicId: user.clinicId,
+      role: user.role,
+      tv: tokenVersion,
+      type: "access",
+    },
     config.jwt.secret,
     { expiresIn: config.jwt.expiresIn } as jwt.SignOptions
   );
 }
 
-export function signExpiredAccessToken(user: {
-  id: string;
-  clinicId: string;
-  role: Role;
-}): string {
+export function signExpiredAccessToken(
+  user: {
+    id: string;
+    clinicId: string;
+    role: Role;
+  },
+  tokenVersion = 0
+): string {
   return jwt.sign(
-    { sub: user.id, clinicId: user.clinicId, role: user.role, type: "access" },
+    {
+      sub: user.id,
+      clinicId: user.clinicId,
+      role: user.role,
+      tv: tokenVersion,
+      type: "access",
+    },
     config.jwt.secret,
     { expiresIn: -10 } as jwt.SignOptions
   );
 }
 
-export function signRefreshToken(user: {
+// Refresh tokens are now tracked server-side: the token's `jti` must point at a
+// RefreshToken row, otherwise /auth/refresh answers 401. This creates the row
+// and signs the matching JWT.
+export async function signRefreshToken(user: {
   id: string;
   clinicId: string;
-}): string {
-  return jwt.sign(
+}): Promise<string> {
+  const jti = randomUUID();
+  const token = jwt.sign(
     { sub: user.id, clinicId: user.clinicId, type: "refresh" },
     config.jwt.refreshSecret,
-    { expiresIn: config.jwt.refreshExpiresIn } as jwt.SignOptions
+    { expiresIn: config.jwt.refreshExpiresIn, jwtid: jti } as jwt.SignOptions
   );
+  const { exp } = jwt.decode(token) as { exp: number };
+
+  await prisma.refreshToken.create({
+    data: { id: jti, userId: user.id, expiresAt: new Date(exp * 1000) },
+  });
+
+  return token;
 }
 
 export function authHeader(token: string): { Authorization: string } {
@@ -126,6 +172,21 @@ export function todayDateOnly(): Date {
 export function futureDateStr(daysFromNow: number): string {
   const d = new Date();
   d.setUTCDate(d.getUTCDate() + daysFromNow);
+  return isoDate(d);
+}
+
+// The n-th (1-based) future date on which the test clinic is OPEN. The clinic
+// created by createClinicSettings() is closed on Saturdays, so a plain
+// futureDateStr(n) lands on a closed day one week out of seven and makes
+// booking tests fail depending on the weekday they run on. Distinct n always
+// give distinct dates.
+export function futureOpenDateStr(nthOpenDay: number): string {
+  const d = new Date();
+  let found = 0;
+  while (found < nthOpenDay) {
+    d.setUTCDate(d.getUTCDate() + 1);
+    if (d.getUTCDay() !== 6) found++; // 6 = Saturday (closed in the factory)
+  }
   return isoDate(d);
 }
 
@@ -167,6 +228,7 @@ export async function createAppointment(
     appointmentTime: string;
     status: string;
     notes: string | null;
+    doctorId: string | null;
   }> = {}
 ) {
   const dateStr = overrides.appointmentDate ?? futureDateStr(1);
@@ -179,6 +241,7 @@ export async function createAppointment(
       patientId,
       createdById,
       updatedById: createdById,
+      doctorId: overrides.doctorId ?? null,
       appointmentDate: dateTime,
       appointmentTime: dateTime,
       status: (overrides.status as any) ?? "SCHEDULED",
@@ -191,12 +254,17 @@ export async function createVisit(
   clinicId: string,
   patientId: string,
   createdById: string,
-  overrides: Partial<{ visitDate: Date; chiefComplaint: string | null }> = {}
+  overrides: Partial<{
+    visitDate: Date;
+    chiefComplaint: string | null;
+    doctorId: string | null;
+  }> = {}
 ) {
   return prisma.visit.create({
     data: {
       clinicId,
       patientId,
+      doctorId: overrides.doctorId ?? null,
       createdById,
       updatedById: createdById,
       visitDate: overrides.visitDate ?? todayDateOnly(),

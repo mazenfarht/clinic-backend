@@ -59,7 +59,7 @@ describe("Visits module", () => {
       const res = await request(app)
         .post("/api/v1/visits")
         .set(authHeader(doctorToken))
-        .send({ patientId: "11111111-1111-1111-1111-111111111111" });
+        .send({ patientId: "11111111-1111-4111-8111-111111111111" });
       expect(res.status).toBe(404);
     });
 
@@ -99,14 +99,16 @@ describe("Visits module", () => {
 
     it("returns 404 for a non-existent visit id", async () => {
       const res = await request(app)
-        .get("/api/v1/visits/11111111-1111-1111-1111-111111111111")
+        .get("/api/v1/visits/11111111-1111-4111-8111-111111111111")
         .set(authHeader(doctorToken));
       expect(res.status).toBe(404);
     });
 
     it("returns visit detail including appointment/queueEntry fields", async () => {
       const freshPatient = await createPatient(clinic.id, doctor.id);
-      const visit = await createVisit(clinic.id, freshPatient.id, doctor.id);
+      const visit = await createVisit(clinic.id, freshPatient.id, doctor.id, {
+        doctorId: doctor.doctorId,
+      });
       const res = await request(app)
         .get(`/api/v1/visits/${visit.id}`)
         .set(authHeader(doctorToken));
@@ -120,14 +122,16 @@ describe("Visits module", () => {
   describe("GET /api/v1/patients/:patientId/visits", () => {
     it("returns 404 for a non-existent patient", async () => {
       const res = await request(app)
-        .get("/api/v1/patients/11111111-1111-1111-1111-111111111111/visits")
+        .get("/api/v1/patients/11111111-1111-4111-8111-111111111111/visits")
         .set(authHeader(doctorToken));
       expect(res.status).toBe(404);
     });
 
     it("returns visits scoped to the given patient", async () => {
       const freshPatient = await createPatient(clinic.id, doctor.id);
-      await createVisit(clinic.id, freshPatient.id, doctor.id);
+      await createVisit(clinic.id, freshPatient.id, doctor.id, {
+        doctorId: doctor.doctorId,
+      });
 
       const res = await request(app)
         .get(`/api/v1/patients/${freshPatient.id}/visits`)
@@ -142,7 +146,9 @@ describe("Visits module", () => {
   describe("PATCH /api/v1/visits/:id", () => {
     it("rejects a RECEPTIONIST", async () => {
       const freshPatient = await createPatient(clinic.id, doctor.id);
-      const visit = await createVisit(clinic.id, freshPatient.id, doctor.id);
+      const visit = await createVisit(clinic.id, freshPatient.id, doctor.id, {
+        doctorId: doctor.doctorId,
+      });
 
       const res = await request(app)
         .patch(`/api/v1/visits/${visit.id}`)
@@ -153,7 +159,9 @@ describe("Visits module", () => {
 
     it("rejects an empty update body", async () => {
       const freshPatient = await createPatient(clinic.id, doctor.id);
-      const visit = await createVisit(clinic.id, freshPatient.id, doctor.id);
+      const visit = await createVisit(clinic.id, freshPatient.id, doctor.id, {
+        doctorId: doctor.doctorId,
+      });
 
       const res = await request(app)
         .patch(`/api/v1/visits/${visit.id}`)
@@ -164,7 +172,9 @@ describe("Visits module", () => {
 
     it("updates diagnosis/treatment as DOCTOR", async () => {
       const freshPatient = await createPatient(clinic.id, doctor.id);
-      const visit = await createVisit(clinic.id, freshPatient.id, doctor.id);
+      const visit = await createVisit(clinic.id, freshPatient.id, doctor.id, {
+        doctorId: doctor.doctorId,
+      });
 
       const res = await request(app)
         .patch(`/api/v1/visits/${visit.id}`)
@@ -178,7 +188,9 @@ describe("Visits module", () => {
   describe("DELETE /api/v1/visits/:id", () => {
     it("rejects a RECEPTIONIST", async () => {
       const freshPatient = await createPatient(clinic.id, doctor.id);
-      const visit = await createVisit(clinic.id, freshPatient.id, doctor.id);
+      const visit = await createVisit(clinic.id, freshPatient.id, doctor.id, {
+        doctorId: doctor.doctorId,
+      });
 
       const res = await request(app)
         .delete(`/api/v1/visits/${visit.id}`)
@@ -188,7 +200,9 @@ describe("Visits module", () => {
 
     it("deletes a visit as DOCTOR", async () => {
       const freshPatient = await createPatient(clinic.id, doctor.id);
-      const visit = await createVisit(clinic.id, freshPatient.id, doctor.id);
+      const visit = await createVisit(clinic.id, freshPatient.id, doctor.id, {
+        doctorId: doctor.doctorId,
+      });
 
       const res = await request(app)
         .delete(`/api/v1/visits/${visit.id}`)

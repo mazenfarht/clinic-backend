@@ -10,7 +10,7 @@ describe("createVisitSchema", () => {
   it("accepts a minimal valid payload", () => {
     expect(
       createVisitSchema.safeParse({
-        patientId: "11111111-1111-1111-1111-111111111111",
+        patientId: "11111111-1111-4111-8111-111111111111",
       }).success
     ).toBe(true);
   });
@@ -18,7 +18,7 @@ describe("createVisitSchema", () => {
   it("rejects an empty chiefComplaint string", () => {
     expect(
       createVisitSchema.safeParse({
-        patientId: "11111111-1111-1111-1111-111111111111",
+        patientId: "11111111-1111-4111-8111-111111111111",
         chiefComplaint: "",
       }).success
     ).toBe(false);
@@ -27,7 +27,7 @@ describe("createVisitSchema", () => {
   it("rejects a malformed visitDate", () => {
     expect(
       createVisitSchema.safeParse({
-        patientId: "11111111-1111-1111-1111-111111111111",
+        patientId: "11111111-1111-4111-8111-111111111111",
         visitDate: "15-01-2026",
       }).success
     ).toBe(false);
