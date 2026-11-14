@@ -287,7 +287,9 @@ export async function softDeletePatient(
   clinicId: string,
   updatedById: string
 ): Promise<void> {
-  const patient = await findPatientOrThrow(id, clinicId);
+  // includeDeleted = true so an already-deleted patient reaches the check
+  // below and gets the documented 400, instead of a misleading 404.
+  const patient = await findPatientOrThrow(id, clinicId, true);
 
   if (patient.deletedAt !== null) {
     throw new BadRequestError("Patient is already deleted");

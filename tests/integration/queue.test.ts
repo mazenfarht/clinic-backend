@@ -29,6 +29,13 @@ describe("Queue module", () => {
     await deleteClinicCascade(clinic.id);
   });
 
+  // All tests share one doctor and "today's" queue, so entries left behind by
+  // one test (a patient still IN_PROGRESS, a taken queue number) would change
+  // the outcome of the next one. Suites that depend on a clean queue call this.
+  async function clearQueue() {
+    await prisma.queueEntry.deleteMany({ where: { clinicId: clinic.id } });
+  }
+
   describe("POST /api/v1/queue/check-in", () => {
     it("rejects without authentication", async () => {
       const patient = await createPatient(clinic.id, doctor.id);
@@ -42,7 +49,7 @@ describe("Queue module", () => {
       const res = await request(app)
         .post("/api/v1/queue/check-in")
         .set(authHeader(doctorToken))
-        .send({ patientId: "11111111-1111-1111-1111-111111111111" });
+        .send({ patientId: "11111111-1111-4111-8111-111111111111" });
       expect(res.status).toBe(404);
     });
 
@@ -74,6 +81,9 @@ describe("Queue module", () => {
   });
 
   describe("POST /api/v1/queue/reserve", () => {
+    // Check-ins above already took queue number 1 for today.
+    beforeAll(clearQueue);
+
     it("reserves a slot between 1 and 3", async () => {
       const res = await request(app)
         .post("/api/v1/queue/reserve")
@@ -144,13 +154,15 @@ describe("Queue module", () => {
   describe("GET /api/v1/queue/:id", () => {
     it("returns 404 for a non-existent entry", async () => {
       const res = await request(app)
-        .get("/api/v1/queue/11111111-1111-1111-1111-111111111111")
+        .get("/api/v1/queue/11111111-1111-4111-8111-111111111111")
         .set(authHeader(doctorToken));
       expect(res.status).toBe(404);
     });
   });
 
   describe("Queue entry lifecycle: call-next / start / serve / skip / recall / cancel", () => {
+    beforeEach(clearQueue);
+
     it("rejects start-consultation on a WAITING (not yet called) entry", async () => {
       const patient = await createPatient(clinic.id, doctor.id);
       const checkInRes = await request(app)

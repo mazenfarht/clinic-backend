@@ -17,6 +17,7 @@ describe("Appointments module", () => {
   let clinic: TestClinic;
   let doctor: TestUser;
   let doctorToken: string;
+  let receptionistToken: string;
   let patient: any;
 
   beforeAll(async () => {
@@ -25,6 +26,10 @@ describe("Appointments module", () => {
       email: "appt-doctor@example.com",
     });
     doctorToken = signAccessToken(doctor as any);
+    const receptionist = await createUser(clinic.id, "RECEPTIONIST", {
+      email: "appt-receptionist@example.com",
+    });
+    receptionistToken = signAccessToken(receptionist as any);
     patient = await createPatient(clinic.id, doctor.id);
   });
 
@@ -38,6 +43,7 @@ describe("Appointments module", () => {
         .post("/api/v1/appointments")
         .send({
           patientId: patient.id,
+          doctorId: doctor.doctorId,
           appointmentDate: futureDateStr(2),
           appointmentTime: "10:00",
         });
@@ -49,7 +55,8 @@ describe("Appointments module", () => {
         .post("/api/v1/appointments")
         .set(authHeader(doctorToken))
         .send({
-          patientId: "11111111-1111-1111-1111-111111111111",
+          patientId: "11111111-1111-4111-8111-111111111111",
+          doctorId: doctor.doctorId,
           appointmentDate: futureDateStr(2),
           appointmentTime: "10:00",
         });
@@ -62,6 +69,7 @@ describe("Appointments module", () => {
         .set(authHeader(doctorToken))
         .send({
           patientId: patient.id,
+          doctorId: doctor.doctorId,
           appointmentDate: futureDateStr(3),
           appointmentTime: "10:00",
         });
@@ -75,10 +83,49 @@ describe("Appointments module", () => {
         .set(authHeader(doctorToken))
         .send({
           patientId: patient.id,
+          doctorId: doctor.doctorId,
           appointmentDate: futureDateStr(3),
           appointmentTime: "10:00",
         });
       expect(res.status).toBe(409);
+    });
+
+    it("rejects a payload without doctorId with 400", async () => {
+      const res = await request(app)
+        .post("/api/v1/appointments")
+        .set(authHeader(doctorToken))
+        .send({
+          patientId: patient.id,
+          appointmentDate: futureDateStr(2),
+          appointmentTime: "10:00",
+        });
+      expect(res.status).toBe(400);
+    });
+
+    it("returns 403 when a DOCTOR books for another doctor", async () => {
+      const res = await request(app)
+        .post("/api/v1/appointments")
+        .set(authHeader(doctorToken))
+        .send({
+          patientId: patient.id,
+          doctorId: "22222222-2222-4222-8222-222222222222",
+          appointmentDate: futureDateStr(2),
+          appointmentTime: "10:00",
+        });
+      expect(res.status).toBe(403);
+    });
+
+    it("returns 404 when a RECEPTIONIST books for an unknown doctor", async () => {
+      const res = await request(app)
+        .post("/api/v1/appointments")
+        .set(authHeader(receptionistToken))
+        .send({
+          patientId: patient.id,
+          doctorId: "22222222-2222-4222-8222-222222222222",
+          appointmentDate: futureDateStr(2),
+          appointmentTime: "10:00",
+        });
+      expect(res.status).toBe(404);
     });
 
     it("rejects a past appointment date with 400", async () => {
@@ -87,6 +134,7 @@ describe("Appointments module", () => {
         .set(authHeader(doctorToken))
         .send({
           patientId: patient.id,
+          doctorId: doctor.doctorId,
           appointmentDate: "2000-01-01",
           appointmentTime: "10:00",
         });
@@ -106,13 +154,14 @@ describe("Appointments module", () => {
 
     it("returns 404 for a non-existent appointment id", async () => {
       const res = await request(app)
-        .get("/api/v1/appointments/11111111-1111-1111-1111-111111111111")
+        .get("/api/v1/appointments/11111111-1111-4111-8111-111111111111")
         .set(authHeader(doctorToken));
       expect(res.status).toBe(404);
     });
 
     it("returns appointment detail by id", async () => {
       const appt = await createAppointment(clinic.id, patient.id, doctor.id, {
+        doctorId: doctor.doctorId,
         appointmentDate: futureDateStr(5),
         appointmentTime: "11:00",
       });
@@ -127,6 +176,7 @@ describe("Appointments module", () => {
   describe("PATCH /api/v1/appointments/:id", () => {
     it("updates notes without changing the time slot", async () => {
       const appt = await createAppointment(clinic.id, patient.id, doctor.id, {
+        doctorId: doctor.doctorId,
         appointmentDate: futureDateStr(6),
         appointmentTime: "12:00",
       });
@@ -140,6 +190,7 @@ describe("Appointments module", () => {
 
     it("returns 400 when updating a completed appointment", async () => {
       const appt = await createAppointment(clinic.id, patient.id, doctor.id, {
+        doctorId: doctor.doctorId,
         appointmentDate: futureDateStr(7),
         appointmentTime: "13:00",
         status: "COMPLETED",
@@ -155,6 +206,7 @@ describe("Appointments module", () => {
   describe("Status transition endpoints", () => {
     it("confirms a SCHEDULED appointment", async () => {
       const appt = await createAppointment(clinic.id, patient.id, doctor.id, {
+        doctorId: doctor.doctorId,
         appointmentDate: futureDateStr(8),
         appointmentTime: "09:00",
       });
@@ -167,6 +219,7 @@ describe("Appointments module", () => {
 
     it("rejects completing a SCHEDULED (unconfirmed) appointment", async () => {
       const appt = await createAppointment(clinic.id, patient.id, doctor.id, {
+        doctorId: doctor.doctorId,
         appointmentDate: futureDateStr(9),
         appointmentTime: "09:00",
       });
@@ -178,6 +231,7 @@ describe("Appointments module", () => {
 
     it("completes a CONFIRMED appointment", async () => {
       const appt = await createAppointment(clinic.id, patient.id, doctor.id, {
+        doctorId: doctor.doctorId,
         appointmentDate: futureDateStr(10),
         appointmentTime: "09:00",
         status: "CONFIRMED",
@@ -191,6 +245,7 @@ describe("Appointments module", () => {
 
     it("cancels a SCHEDULED appointment", async () => {
       const appt = await createAppointment(clinic.id, patient.id, doctor.id, {
+        doctorId: doctor.doctorId,
         appointmentDate: futureDateStr(11),
         appointmentTime: "09:00",
       });
@@ -203,6 +258,7 @@ describe("Appointments module", () => {
 
     it("rejects cancelling an already cancelled appointment", async () => {
       const appt = await createAppointment(clinic.id, patient.id, doctor.id, {
+        doctorId: doctor.doctorId,
         appointmentDate: futureDateStr(12),
         appointmentTime: "09:00",
         status: "CANCELLED",
@@ -215,6 +271,7 @@ describe("Appointments module", () => {
 
     it("marks a SCHEDULED appointment as no-show", async () => {
       const appt = await createAppointment(clinic.id, patient.id, doctor.id, {
+        doctorId: doctor.doctorId,
         appointmentDate: futureDateStr(13),
         appointmentTime: "09:00",
       });
@@ -228,7 +285,7 @@ describe("Appointments module", () => {
     it("returns 404 for transitions on a non-existent appointment", async () => {
       const res = await request(app)
         .patch(
-          "/api/v1/appointments/11111111-1111-1111-1111-111111111111/confirm"
+          "/api/v1/appointments/11111111-1111-4111-8111-111111111111/confirm"
         )
         .set(authHeader(doctorToken));
       expect(res.status).toBe(404);

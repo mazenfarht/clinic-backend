@@ -99,7 +99,7 @@ describe("Auth module", () => {
     });
 
     it("returns a new token pair for a valid refresh token", async () => {
-      const refreshToken = signRefreshToken({
+      const refreshToken = await signRefreshToken({
         id: doctor.id,
         clinicId: clinic.id,
       });
@@ -116,7 +116,7 @@ describe("Auth module", () => {
         email: "inactive-refresh@example.com",
         isActive: false,
       });
-      const refreshToken = signRefreshToken({
+      const refreshToken = await signRefreshToken({
         id: inactive.id,
         clinicId: clinic.id,
       });
@@ -174,13 +174,32 @@ describe("Auth module", () => {
       expect(res.status).toBe(401);
     });
 
-    it("logs out successfully with a valid token", async () => {
+    it("rejects a logout body with neither refreshToken nor allDevices", async () => {
       const token = signAccessToken(doctor as any);
       const res = await request(app)
         .post("/api/v1/auth/logout")
         .set(authHeader(token));
+      expect(res.status).toBe(400);
+    });
+
+    it("logs out successfully and revokes the given refresh token", async () => {
+      const token = signAccessToken(doctor as any);
+      const refreshToken = await signRefreshToken({
+        id: doctor.id,
+        clinicId: clinic.id,
+      });
+
+      const res = await request(app)
+        .post("/api/v1/auth/logout")
+        .set(authHeader(token))
+        .send({ refreshToken });
       expect(res.status).toBe(200);
       expect(res.body.message).toMatch(/logged out/i);
+
+      const refreshRes = await request(app)
+        .post("/api/v1/auth/refresh")
+        .send({ refreshToken });
+      expect(refreshRes.status).toBe(401);
     });
   });
 

@@ -162,7 +162,7 @@ describe("Patients module", () => {
   describe("GET /api/v1/patients/:id", () => {
     it("returns 404 for a non-existent id", async () => {
       const res = await request(app)
-        .get("/api/v1/patients/11111111-1111-1111-1111-111111111111")
+        .get("/api/v1/patients/11111111-1111-4111-8111-111111111111")
         .set(authHeader(doctorToken));
       expect(res.status).toBe(404);
     });
@@ -223,7 +223,7 @@ describe("Patients module", () => {
 
     it("returns 404 for a non-existent patient", async () => {
       const res = await request(app)
-        .patch("/api/v1/patients/11111111-1111-1111-1111-111111111111")
+        .patch("/api/v1/patients/11111111-1111-4111-8111-111111111111")
         .set(authHeader(doctorToken))
         .send({ fullName: "Ghost" });
       expect(res.status).toBe(404);

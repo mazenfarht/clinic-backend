@@ -13,10 +13,18 @@ function futureDate(days: number): string {
 
 describe("createAppointmentSchema", () => {
   const base = {
-    patientId: "11111111-1111-1111-1111-111111111111",
+    patientId: "11111111-1111-4111-8111-111111111111",
+    doctorId: "22222222-2222-4222-8222-222222222222",
     appointmentDate: futureDate(1),
     appointmentTime: "09:30",
   };
+
+  it("requires a doctorId", () => {
+    const { doctorId: _omit, ...withoutDoctor } = base;
+    expect(createAppointmentSchema.safeParse(withoutDoctor).success).toBe(
+      false
+    );
+  });
 
   it("accepts a valid future appointment", () => {
     expect(createAppointmentSchema.safeParse(base).success).toBe(true);
