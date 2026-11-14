@@ -1,6 +1,7 @@
 // src/modules/visits/visit.validation.ts
 
 import { z } from "zod";
+import { getClinicTodayStr } from "../../shared/utils/clinicTime";
 
 export const createVisitSchema = z.object({
   patientId: z.string().uuid("Invalid patient ID format"),
@@ -89,7 +90,7 @@ export const updateVisitSchema = z
         "Follow-up date must be in YYYY-MM-DD format"
       )
       .refine(
-        (val) => new Date(val) > new Date(new Date().setUTCHours(0, 0, 0, 0)),
+        (val) => val > getClinicTodayStr(),
         "Follow-up date must be in the future"
       )
       .nullable()

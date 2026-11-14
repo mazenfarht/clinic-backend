@@ -2,7 +2,7 @@
 
 import { Prisma } from "@prisma/client";
 import prisma from "../../config/database";
-import config from "../../config";
+import { getClinicNow } from "../../shared/utils/clinicTime";
 import { maskName } from "../../shared/utils/maskName";
 import { getWaitingBoard } from "../queue/queue.service";
 import type { WaitingBoard } from "../queue/queue.types";
@@ -56,26 +56,6 @@ type DayKey = (typeof DAY_KEYS)[number];
 // Active appointments hold their slot. Mirrors the partial unique index
 // (SCHEDULED, CONFIRMED) defined in the migrations.
 const ACTIVE_STATUSES = ["SCHEDULED", "CONFIRMED"] as const;
-
-// Current date (YYYY-MM-DD) and minutes-since-midnight in the clinic timezone.
-// Using server-local or UTC time here would let patients book already-passed
-// slots (Cairo is UTC+2/+3).
-function getClinicNow(): { dateStr: string; minutes: number } {
-  const parts = new Intl.DateTimeFormat("en-CA", {
-    timeZone: config.clinic.timezone,
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-    hourCycle: "h23",
-  }).formatToParts(new Date());
-  const get = (t: string) => parts.find((p) => p.type === t)?.value ?? "00";
-  return {
-    dateStr: `${get("year")}-${get("month")}-${get("day")}`,
-    minutes: Number(get("hour")) * 60 + Number(get("minute")),
-  };
-}
 
 function slotToMinutes(slot: string): number {
   const [h, m] = slot.split(":").map(Number);

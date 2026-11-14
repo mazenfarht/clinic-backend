@@ -1,6 +1,11 @@
 // src/modules/dashboard/dashboard.service.ts
 
 import prisma from "../../config/database";
+import {
+  addDaysToDateStr,
+  endOfMonthDateStr,
+  getClinicTodayStr,
+} from "../../shared/utils/clinicTime";
 import type {
   OverviewStats,
   TodayStats,
@@ -30,23 +35,19 @@ import type {
 // Helpers
 // ---------------------------------------------------------------------------
 
+// Bounds of one calendar day. With no date, "today" is the clinic (Cairo) day,
+// not the UTC day: between 00:00 and 02:00/03:00 Cairo time UTC is still yesterday.
 function getDateBounds(dateStr?: string): { start: Date; end: Date } {
-  const base = dateStr ? new Date(`${dateStr}T00:00:00.000Z`) : new Date();
-  const start = new Date(base);
-  start.setUTCHours(0, 0, 0, 0);
-  const end = new Date(base);
-  end.setUTCHours(23, 59, 59, 999);
-  return { start, end };
+  const day = dateStr ?? getClinicTodayStr();
+  return {
+    start: new Date(`${day}T00:00:00.000Z`),
+    end: new Date(`${day}T23:59:59.999Z`),
+  };
 }
 
 function getDefaultAnalyticsPeriod(): { fromDate: string; toDate: string } {
-  const to = new Date();
-  const from = new Date();
-  from.setDate(from.getDate() - 29);
-  return {
-    fromDate: from.toISOString().split("T")[0],
-    toDate: to.toISOString().split("T")[0],
-  };
+  const toDate = getClinicTodayStr();
+  return { fromDate: addDaysToDateStr(toDate, -29), toDate };
 }
 
 // Restricts a query to one doctor when doctorId is given (clinic-wide otherwise)
@@ -221,7 +222,7 @@ export async function getToday(
 ): Promise<TodayStats> {
   const scope = doctorScope(clinicId, doctorId);
   const { start, end } = getDateBounds(input.date);
-  const dateStr = (input.date ?? new Date().toISOString()).split("T")[0];
+  const dateStr = input.date ?? getClinicTodayStr();
 
   const [
     appointments,
@@ -355,7 +356,7 @@ export async function getQueueDashboard(
 ): Promise<QueueDashboard> {
   const scope = doctorScope(clinicId, doctorId);
   const { start, end } = getDateBounds(input.date);
-  const dateStr = (input.date ?? new Date().toISOString()).split("T")[0];
+  const dateStr = input.date ?? getClinicTodayStr();
   const { page = 1, limit = 20 } = input;
   const skip = (page - 1) * limit;
 
@@ -484,13 +485,14 @@ export async function getAppointmentsDashboard(
   const { page = 1, limit = 10 } = input;
   const skip = (page - 1) * limit;
 
-  const now = new Date();
-  const fromDate = input.fromDate
-    ? new Date(`${input.fromDate}T00:00:00.000Z`)
-    : now;
-  const toDate = input.toDate
-    ? new Date(`${input.toDate}T23:59:59.999Z`)
-    : new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59, 999);
+  // appointmentDate is a date-only column (UTC midnight), so the default range
+  // starts at today's midnight, not "now": otherwise today's appointments are
+  // excluded. Defaults: today -> end of the current month (Cairo calendar).
+  const todayStr = getClinicTodayStr();
+  const fromDate = new Date(`${input.fromDate ?? todayStr}T00:00:00.000Z`);
+  const toDate = new Date(
+    `${input.toDate ?? endOfMonthDateStr(todayStr)}T23:59:59.999Z`
+  );
 
   const appointmentSelect = {
     id: true,

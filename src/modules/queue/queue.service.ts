@@ -8,6 +8,7 @@ import {
 } from "../../shared/errors/AppError";
 import { ApiResponse } from "../../shared/utils/apiResponse";
 import { maskName } from "../../shared/utils/maskName";
+import { getClinicToday, getClinicTimeOfDayMs } from "../../shared/utils/clinicTime";
 import { QUEUE_STATUS_TRANSITIONS } from "./queue.types";
 import type {
   QueueEntrySummary,
@@ -82,10 +83,9 @@ const queueEntrySummarySelect = {
 // Helpers
 // ---------------------------------------------------------------------------
 
+// "Today" on the clinic (Cairo) calendar as UTC midnight, matching @db.Date.
 function getTodayDate(): Date {
-  const today = new Date();
-  today.setUTCHours(0, 0, 0, 0);
-  return today;
+  return getClinicToday();
 }
 
 function parseDateFilter(date?: string): Date {
@@ -184,13 +184,10 @@ function requireDoctor(doctorId: string | undefined): string {
 // Queue priority helpers
 // ---------------------------------------------------------------------------
 
+// checkedInAt is a real instant, so read its time-of-day in clinic (Cairo)
+// time. appointmentTime is stored as local wall-clock, hence the UTC read below.
 function getTimeOfDay(date: Date): number {
-  return (
-    date.getUTCHours() * 60 * 60 * 1000 +
-    date.getUTCMinutes() * 60 * 1000 +
-    date.getUTCSeconds() * 1000 +
-    date.getUTCMilliseconds()
-  );
+  return getClinicTimeOfDayMs(date);
 }
 
 function getAppointmentTimeOfDay(date: Date): number {
