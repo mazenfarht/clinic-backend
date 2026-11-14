@@ -1,6 +1,11 @@
 // prisma/seed.ts
-// Creates a demo clinic, its settings and the first DOCTOR account.
+// Creates the first platform admin (super admin), a demo clinic, its settings
+// and two demo DOCTOR accounts.
 // Idempotent: safe to run more than once.   Usage: npm run seed
+//
+// Super admin: set SUPER_ADMIN_EMAIL and SUPER_ADMIN_PASSWORD (optional
+// SUPER_ADMIN_NAME). If either is missing the super admin step is skipped.
+// There is intentionally NO default password for it.
 
 import "dotenv/config";
 import bcrypt from "bcrypt";
@@ -10,7 +15,53 @@ const prisma = new PrismaClient();
 
 const day = (isOpen: boolean) => ({ open: "10:00", close: "18:00", isOpen });
 
+// Same rules as passwordComplexitySchema in src/modules/auth/auth.validation.ts
+function passwordProblem(password: string): string | null {
+  if (password.length < 8) return "must be at least 8 characters";
+  if (!/[A-Z]/.test(password)) return "must contain an uppercase letter";
+  if (!/[a-z]/.test(password)) return "must contain a lowercase letter";
+  if (!/[0-9]/.test(password)) return "must contain a number";
+  if (!/[^A-Za-z0-9]/.test(password)) return "must contain a special character";
+  return null;
+}
+
+async function seedSuperAdmin(): Promise<void> {
+  const rawEmail = process.env.SUPER_ADMIN_EMAIL?.trim();
+  const password = process.env.SUPER_ADMIN_PASSWORD;
+  const fullName = process.env.SUPER_ADMIN_NAME?.trim() || "Super Admin";
+
+  if (!rawEmail || !password) {
+    console.warn(
+      "Super admin skipped: set SUPER_ADMIN_EMAIL and SUPER_ADMIN_PASSWORD to create one."
+    );
+    return;
+  }
+
+  const email = rawEmail.toLowerCase();
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+    throw new Error(`SUPER_ADMIN_EMAIL is not a valid email: "${rawEmail}"`);
+  }
+  const problem = passwordProblem(password);
+  if (problem) {
+    throw new Error(`SUPER_ADMIN_PASSWORD ${problem}`);
+  }
+
+  const existing = await prisma.platformAdmin.findUnique({ where: { email } });
+  if (existing) {
+    // Never overwrite an existing admin's password from the seed.
+    console.log(`  superAdmin: ${email} (already exists, left unchanged)`);
+    return;
+  }
+
+  await prisma.platformAdmin.create({
+    data: { email, fullName, passwordHash: await bcrypt.hash(password, 12) },
+  });
+  console.log(`  superAdmin: ${email} (created)`);
+}
+
 async function main() {
+  await seedSuperAdmin();
+
   const email = process.env.SEED_DOCTOR_EMAIL ?? "doctor@clinic.com";
   const password = process.env.SEED_DOCTOR_PASSWORD ?? "ChangeMe123!";
 
