@@ -7,6 +7,7 @@ import {
   BadRequestError,
 } from "../../shared/errors/AppError";
 import { ApiResponse } from "../../shared/utils/apiResponse";
+import { getClinicToday } from "../../shared/utils/clinicTime";
 import type {
   VisitDetail,
   VisitFilters,
@@ -217,7 +218,7 @@ export async function createVisit(
 
   const visitDate = input.visitDate
     ? new Date(`${input.visitDate}T00:00:00.000Z`)
-    : new Date(new Date().setUTCHours(0, 0, 0, 0));
+    : getClinicToday();
 
   const existingVisit = await prisma.visit.findFirst({
     where: { clinicId, patientId: input.patientId, visitDate, doctorId },

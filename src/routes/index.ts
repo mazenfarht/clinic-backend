@@ -13,6 +13,7 @@ import { clinicSettingsRoutes } from "../modules/clinic-settings";
 import publicRoutes from "../modules/public";
 import usersRouter from "../modules/users";
 import doctorsRouter from "../modules/doctors";
+import adminRouter from "../modules/admin";
 
 const router = Router();
 
@@ -48,5 +49,6 @@ router.use("/clinic-settings", clinicSettingsRoutes);
 router.use("/public", publicRoutes);
 router.use("/users", usersRouter);
 router.use("/doctors", doctorsRouter);
+router.use("/admin", adminRouter);
 
 export default router;

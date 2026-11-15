@@ -6,7 +6,6 @@ import { ApiResponse } from "../../shared/utils/apiResponse";
 import asyncHandler from "../../shared/utils/asyncHandler";
 import { AppError, HttpStatus } from "../../shared/errors/AppError";
 import {
-  createDoctorSchema,
   updateDoctorSchema,
   doctorIdSchema,
 } from "./doctors.validation";
@@ -20,14 +19,6 @@ export const listDoctors = asyncHandler(async (req: Request, res: Response) => {
   const doctors = await DoctorsService.listDoctors(clinicIdOf(req));
   ApiResponse.ok(res, doctors, "Doctors retrieved successfully");
 });
-
-export const createDoctor = asyncHandler(
-  async (req: Request, res: Response) => {
-    const input = createDoctorSchema.parse(req.body);
-    const doctor = await DoctorsService.createDoctor(clinicIdOf(req), input);
-    ApiResponse.created(res, doctor, "Doctor created successfully");
-  }
-);
 
 export const updateDoctor = asyncHandler(
   async (req: Request, res: Response) => {

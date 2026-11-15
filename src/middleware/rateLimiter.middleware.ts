@@ -54,3 +54,10 @@ export const waitingScreenLimiter = build(
   60,
   "Too many requests, please slow down the refresh rate."
 );
+
+/** Admin actions that create or change accounts and credentials. */
+export const adminWriteLimiter = build(
+  15 * 60 * 1000,
+  30,
+  "Too many admin requests, please try again later."
+);

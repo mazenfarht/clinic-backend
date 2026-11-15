@@ -30,12 +30,28 @@ function optionalIntEnv(key: string, fallback: number): number {
   return parsed;
 }
 
+// The admin secret must not be reused for clinic tokens: sharing it would
+// defeat the separation between the two token families.
+function assertAdminSecretIsDistinct(): void {
+  const admin = requireEnv("ADMIN_JWT_SECRET");
+  if (
+    admin === process.env.JWT_SECRET ||
+    admin === process.env.JWT_REFRESH_SECRET
+  ) {
+    throw new Error(
+      "[Config] ADMIN_JWT_SECRET must be different from JWT_SECRET and JWT_REFRESH_SECRET"
+    );
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Config object — built once, exported as a frozen object so no module can
 // mutate it at runtime.
 // ---------------------------------------------------------------------------
 
 function buildConfig() {
+  assertAdminSecretIsDistinct();
+
   return Object.freeze({
     env: optionalEnv("NODE_ENV", "development") as
       | "development"
@@ -59,6 +75,14 @@ function buildConfig() {
       expiresIn: optionalEnv("JWT_EXPIRES_IN", "15m"),
       refreshSecret: requireEnv("JWT_REFRESH_SECRET"),
       refreshExpiresIn: optionalEnv("JWT_REFRESH_EXPIRES_IN", "30d"),
+    }),
+
+    // Platform admin (super admin) tokens. A separate secret from `jwt` so a
+    // clinic token can never be accepted as an admin token and vice versa.
+    // No refresh token: the admin logs in again when this expires.
+    adminJwt: Object.freeze({
+      secret: requireEnv("ADMIN_JWT_SECRET"),
+      expiresIn: optionalEnv("ADMIN_JWT_EXPIRES_IN", "8h"),
     }),
 
     bcrypt: Object.freeze({

@@ -2,6 +2,7 @@
 
 import { z } from "zod";
 import { AppointmentStatus } from "@prisma/client";
+import { getClinicTodayStr } from "../../shared/utils/clinicTime";
 
 const appointmentDateSchema = z
   .string()
@@ -11,12 +12,12 @@ const appointmentDateSchema = z
     const date = new Date(val);
     return !isNaN(date.getTime());
   }, "Invalid date")
-  .refine((val) => {
-    const date = new Date(val);
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-    return date >= today;
-  }, "Appointment date cannot be in the past");
+  // Compare against today's date at the clinic (Cairo). YYYY-MM-DD strings
+  // sort chronologically, so a plain string comparison is exact.
+  .refine(
+    (val) => val >= getClinicTodayStr(),
+    "Appointment date cannot be in the past"
+  );
 
 const appointmentTimeSchema = z
   .string()

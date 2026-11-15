@@ -45,6 +45,10 @@ model Clinic {
   email     String?
   address   String?
   isActive  Boolean  @default(true)
+  // Next number for auto-generated medical record numbers (MRN-000001, ...).
+  // Incremented atomically inside the patient-creation transaction; see
+  // src/modules/patients/mrn.ts. Never decremented, never reused.
+  nextMrn   Int      @default(1)
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -107,6 +111,27 @@ model User {
   @@unique([clinicId, email])
   @@index([clinicId])
   @@map("users")
+}
+
+// Platform operator ("super admin") who creates and manages clinics.
+// Deliberately NOT a User: User.clinicId is mandatory and all clinic code relies
+// on it, so platform admins live in their own table with their own login. They
+// have no clinicId and no foreign key to any clinic or patient data.
+model PlatformAdmin {
+  id           String    @id @default(uuid())
+  // stored lowercase
+  email        String    @unique
+  passwordHash String
+  fullName     String
+  isActive     Boolean   @default(true)
+  // Bumped on password change / deactivation: every admin token issued before
+  // the bump (it carries the old value) is rejected immediately.
+  tokenVersion Int       @default(0)
+  lastLogin    DateTime?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  @@map("platform_admins")
 }
 
 // One row per issued refresh token. The row id is the token's `jti` claim, so a

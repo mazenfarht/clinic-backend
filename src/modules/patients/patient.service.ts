@@ -1,5 +1,6 @@
 // src/modules/patients/patient.service.ts
 
+import { allocateMrn } from "./mrn";
 import prisma from "../../config/database";
 import {
   ConflictError,
@@ -153,23 +154,30 @@ export async function createPatient(
   createdById: string,
   input: CreatePatientInput
 ): Promise<PatientSummary> {
-  await assertUniqueMrn(clinicId, input.mrn);
+  // A number typed by the user must be free; otherwise one is generated below.
+  if (input.mrn) {
+    await assertUniqueMrn(clinicId, input.mrn);
+  }
   await assertUniquePhone(clinicId, input.phone);
 
-  const patient = await prisma.patient.create({
-    data: {
-      clinicId,
-      createdById,
-      updatedById: createdById,
-      mrn: input.mrn,
-      fullName: input.fullName,
-      phone: input.phone,
-      dateOfBirth: new Date(input.dateOfBirth),
-      gender: input.gender,
-      address: input.address ?? null,
-      notes: input.notes ?? null,
-    },
-    select: patientSummarySelect,
+  const patient = await prisma.$transaction(async (tx) => {
+    const mrn = input.mrn ?? (await allocateMrn(tx, clinicId));
+
+    return tx.patient.create({
+      data: {
+        clinicId,
+        createdById,
+        updatedById: createdById,
+        mrn,
+        fullName: input.fullName,
+        phone: input.phone,
+        dateOfBirth: new Date(input.dateOfBirth),
+        gender: input.gender,
+        address: input.address ?? null,
+        notes: input.notes ?? null,
+      },
+      select: patientSummarySelect,
+    });
   });
 
   return patient as PatientSummary;
