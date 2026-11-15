@@ -16,7 +16,8 @@ router.get(
   DoctorsController.listDoctors
 );
 
-router.post("/", requireRoles("DOCTOR"), DoctorsController.createDoctor);
+// There is deliberately no POST /: doctors are created by the platform admin
+// (POST /admin/clinics and POST /admin/clinics/:id/doctors), never by a doctor.
 router.patch("/:id", requireRoles("DOCTOR"), DoctorsController.updateDoctor);
 
 export default router;

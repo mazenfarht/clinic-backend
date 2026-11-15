@@ -18,16 +18,24 @@ const dateOfBirthSchema = z
     message: "Date of birth must be after 1900-01-01",
   });
 
-export const createPatientSchema = z.object({
-  mrn: z
+// Optional: leave it out (or send an empty string) and the API generates the
+// next number for the clinic (MRN-000001, MRN-000002, ...). Send one only to
+// keep an existing paper-file number.
+const mrnSchema = z.preprocess(
+  (v) => (typeof v === "string" && v.trim() === "" ? undefined : v),
+  z
     .string()
     .trim()
-    .min(1, "MRN is required")
     .max(50, "MRN must not exceed 50 characters")
     .regex(
       /^[A-Za-z0-9_-]+$/,
       "MRN must contain only letters, numbers, hyphens, and underscores"
-    ),
+    )
+    .optional()
+);
+
+export const createPatientSchema = z.object({
+  mrn: mrnSchema,
 
   fullName: z
     .string()

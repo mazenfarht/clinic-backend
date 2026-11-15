@@ -45,6 +45,10 @@ model Clinic {
   email     String?
   address   String?
   isActive  Boolean  @default(true)
+  // Next number for auto-generated medical record numbers (MRN-000001, ...).
+  // Incremented atomically inside the patient-creation transaction; see
+  // src/modules/patients/mrn.ts. Never decremented, never reused.
+  nextMrn   Int      @default(1)
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 

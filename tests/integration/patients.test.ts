@@ -54,9 +54,15 @@ describe("Patients module", () => {
       const res = await request(app)
         .post("/api/v1/patients")
         .set(authHeader(doctorToken))
-        .send({ ...validPayload, mrn: "" });
+        .send({ ...validPayload, mrn: "has spaces" });
       expect(res.status).toBe(400);
       expect(res.body.errors?.length).toBeGreaterThan(0);
+
+      const noName = await request(app)
+        .post("/api/v1/patients")
+        .set(authHeader(doctorToken))
+        .send({ ...validPayload, fullName: undefined });
+      expect(noName.status).toBe(400);
     });
 
     it("creates a patient as DOCTOR", async () => {

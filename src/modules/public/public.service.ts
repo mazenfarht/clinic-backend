@@ -3,6 +3,7 @@
 import { Prisma } from "@prisma/client";
 import prisma from "../../config/database";
 import { getClinicNow } from "../../shared/utils/clinicTime";
+import { allocateMrn } from "../patients/mrn";
 import { maskName } from "../../shared/utils/maskName";
 import { getWaitingBoard } from "../queue/queue.service";
 import type { WaitingBoard } from "../queue/queue.types";
@@ -170,22 +171,6 @@ async function getBookedSlots(
   );
 }
 
-// Generates the next MRN for a clinic in the format MRN-000001.
-// Based on the highest existing number (not count) so soft deletes / gaps never
-// cause collisions; the caller retries on a unique-constraint race.
-async function generateMrn(clinicId: string): Promise<string> {
-  const last = await prisma.patient.findFirst({
-    where: { clinicId, mrn: { startsWith: "MRN-" } },
-    orderBy: { mrn: "desc" },
-    select: { mrn: true },
-  });
-  const lastNum = last ? parseInt(last.mrn.replace("MRN-", ""), 10) : 0;
-  const next = ((Number.isNaN(lastNum) ? 0 : lastNum) + 1)
-    .toString()
-    .padStart(6, "0");
-  return `MRN-${next}`;
-}
-
 function isUniqueViolation(err: unknown): boolean {
   return (
     err instanceof Prisma.PrismaClientKnownRequestError && err.code === "P2002"
@@ -300,11 +285,12 @@ export async function registerPatient(
     );
   }
 
-  // Auto-generate MRN; retry if two registrations race for the same number.
-  for (let attempt = 0; attempt < 5; attempt++) {
-    const mrn = await generateMrn(clinicId);
-    try {
-      const patient = await prisma.patient.create({
+  // The MRN comes from the clinic's own sequence (same one staff use), reserved
+  // inside the transaction that inserts the patient.
+  try {
+    const patient = await prisma.$transaction(async (tx) => {
+      const mrn = await allocateMrn(tx, clinicId);
+      return tx.patient.create({
         data: {
           clinicId,
           mrn,
@@ -315,24 +301,18 @@ export async function registerPatient(
         },
         select: { id: true, fullName: true },
       });
-      return { patientId: patient.id, fullName: patient.fullName };
-    } catch (err) {
-      if (!isUniqueViolation(err)) throw err;
-      // Either the MRN or the phone collided. If the phone now exists, report it.
-      const phoneTaken = await prisma.patient.findFirst({
-        where: { clinicId, phone: input.phone },
-        select: { id: true },
-      });
-      if (phoneTaken) {
-        throw new ConflictError(
-          `A patient with phone "${input.phone}" already exists in this clinic`
-        );
-      }
+    });
+    return { patientId: patient.id, fullName: patient.fullName };
+  } catch (err) {
+    // Two registrations with the same phone at the same moment: the unique
+    // index let only one through.
+    if (isUniqueViolation(err)) {
+      throw new ConflictError(
+        `A patient with phone "${input.phone}" already exists in this clinic`
+      );
     }
+    throw err;
   }
-  throw new ConflictError(
-    "Could not allocate a medical record number, please retry"
-  );
 }
 
 // ---------------------------------------------------------------------------

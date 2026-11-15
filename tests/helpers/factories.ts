@@ -155,6 +155,57 @@ export async function signRefreshToken(user: {
   return token;
 }
 
+// --- Platform admin (super admin) -------------------------------------------
+
+export interface TestPlatformAdmin {
+  id: string;
+  email: string;
+  plainPassword: string;
+}
+
+export async function createPlatformAdmin(
+  overrides: Partial<{
+    email: string;
+    fullName: string;
+    password: string;
+    isActive: boolean;
+  }> = {}
+): Promise<TestPlatformAdmin> {
+  const plainPassword = overrides.password ?? DEFAULT_PASSWORD;
+  const admin = await prisma.platformAdmin.create({
+    data: {
+      email:
+        overrides.email ?? `admin-${randomUUID().slice(0, 8)}@example.com`,
+      fullName: overrides.fullName ?? "Test Admin",
+      passwordHash: await bcrypt.hash(plainPassword, config.bcrypt.saltRounds),
+      isActive: overrides.isActive ?? true,
+    },
+  });
+  return { id: admin.id, email: admin.email, plainPassword };
+}
+
+export async function deletePlatformAdmin(id: string): Promise<void> {
+  await prisma.platformAdmin.delete({ where: { id } }).catch(() => undefined);
+}
+
+// Admin tokens are signed with ADMIN_JWT_SECRET and carry the admin's
+// tokenVersion (`tv`); new admins start at 0.
+export function signAdminToken(adminId: string, tokenVersion = 0): string {
+  return jwt.sign(
+    { sub: adminId, tv: tokenVersion, type: "admin" },
+    config.adminJwt.secret,
+    { expiresIn: config.adminJwt.expiresIn } as jwt.SignOptions
+  );
+}
+
+export function signExpiredAdminToken(adminId: string, tokenVersion = 0): string {
+  return jwt.sign(
+    { sub: adminId, tv: tokenVersion, type: "admin" },
+    config.adminJwt.secret,
+    { expiresIn: -10 } as jwt.SignOptions
+  );
+}
+
 export function authHeader(token: string): { Authorization: string } {
   return { Authorization: `Bearer ${token}` };
 }

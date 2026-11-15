@@ -9,6 +9,9 @@ process.env.JWT_SECRET =
 process.env.JWT_REFRESH_SECRET =
   "test-jwt-refresh-secret-key-for-automated-tests-only-9876543210";
 
+process.env.ADMIN_JWT_SECRET =
+  "test-admin-jwt-secret-key-for-automated-tests-only-abcdef0123";
+
 process.env.JWT_EXPIRES_IN = "15m";
 process.env.JWT_REFRESH_EXPIRES_IN = "7d";
 process.env.BCRYPT_SALT_ROUNDS = "4";
