@@ -81,9 +81,6 @@ export const ALLOWED_STATUS_TRANSITIONS: AllowedStatusTransition[] = [
   { from: "SCHEDULED", to: "CONFIRMED" },
   { from: "SCHEDULED", to: "CANCELLED" },
   { from: "SCHEDULED", to: "NO_SHOW" },
-  // A walk-in appointment is often completed without ever being explicitly
-  // confirmed by reception — require CONFIRMED-first would block that.
-  { from: "SCHEDULED", to: "COMPLETED" },
   { from: "CONFIRMED", to: "CANCELLED" },
   { from: "CONFIRMED", to: "COMPLETED" },
   { from: "CONFIRMED", to: "NO_SHOW" },
