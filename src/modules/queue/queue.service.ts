@@ -180,6 +180,72 @@ function requireDoctor(doctorId: string | undefined): string {
   return doctorId;
 }
 
+function average(values: number[]): number | null {
+  if (values.length === 0) return null;
+  return parseFloat(
+    (values.reduce((a, b) => a + b, 0) / values.length).toFixed(1)
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Shared wait / serve time metrics.
+//
+// Single source of truth so the live queue stats, the Today dashboard and the
+// Analytics dashboard never disagree on what "wait time" / "serve time" mean:
+//
+//   waitTimeMinutes  = calledAt - checkedInAt (time actually spent waiting)
+//   serveTimeMinutes = servedAt - startedAt   (actual consultation duration)
+//
+// Reserved slots (isReserved) are excluded: they have no checkedInAt, so
+// using createdAt (reservation time) in their place would count the time
+// between booking and being called as "waiting", which it is not.
+// ---------------------------------------------------------------------------
+
+export async function computeQueueTimeMetrics(
+  clinicId: string,
+  start: Date,
+  end: Date,
+  doctorId?: string
+): Promise<{
+  averageWaitTimeMinutes: number | null;
+  averageServeTimeMinutes: number | null;
+}> {
+  const servedEntries = await prisma.queueEntry.findMany({
+    where: {
+      clinicId,
+      ...(doctorId ? { doctorId } : {}),
+      queueDate: { gte: start, lte: end },
+      status: "SERVED",
+      isReserved: false,
+      checkedInAt: { not: null },
+      calledAt: { not: null },
+      startedAt: { not: null },
+      servedAt: { not: null },
+    },
+    select: {
+      checkedInAt: true,
+      calledAt: true,
+      startedAt: true,
+      servedAt: true,
+    },
+  });
+
+  const waitTimes = servedEntries
+    .filter((e) => e.calledAt !== null && e.checkedInAt !== null)
+    .map((e) => (e.calledAt!.getTime() - e.checkedInAt!.getTime()) / 60000)
+    .filter((t) => t >= 0);
+
+  const serveTimes = servedEntries
+    .filter((e) => e.servedAt !== null && e.startedAt !== null)
+    .map((e) => (e.servedAt!.getTime() - e.startedAt!.getTime()) / 60000)
+    .filter((t) => t >= 0);
+
+  return {
+    averageWaitTimeMinutes: average(waitTimes),
+    averageServeTimeMinutes: average(serveTimes),
+  };
+}
+
 // ---------------------------------------------------------------------------
 // Queue priority helpers
 // ---------------------------------------------------------------------------
@@ -246,8 +312,13 @@ type QueueCandidate = QueuePriorityEntry & {
  * 7. Patients who have not checked in NEVER count toward the 3.
  *
  * 8. calledAt / startedAt / servedAt are intentionally NOT used.
+ *
+ * Exported so every screen that needs to know "who's actually next"
+ * (call-next itself, the live queue status, the public waiting board, and
+ * the reception dashboard) asks this same function instead of re-deriving
+ * their own, possibly-diverging, ordering.
  */
-async function selectNextWaiting(
+export async function selectNextWaiting(
   client: Prisma.TransactionClient | typeof prisma,
   clinicId: string,
   doctorId: string,
@@ -1183,7 +1254,7 @@ export async function getQueueStatistics(
   const queueDate = parseDateFilter(date);
   const base = { clinicId, queueDate, ...(doctorId ? { doctorId } : {}) };
 
-  const [total, waiting, inProgress, served, cancelled, servedEntries] =
+  const [total, waiting, inProgress, served, cancelled] =
     await prisma.$transaction([
       prisma.queueEntry.count({
         where: base,
@@ -1216,62 +1287,10 @@ export async function getQueueStatistics(
           status: "CANCELLED",
         },
       }),
-
-      prisma.queueEntry.findMany({
-        where: {
-          ...base,
-          status: "SERVED",
-          isReserved: false,
-          checkedInAt: {
-            not: null,
-          },
-          calledAt: {
-            not: null,
-          },
-          startedAt: {
-            not: null,
-          },
-          servedAt: {
-            not: null,
-          },
-        },
-        select: {
-          checkedInAt: true,
-          calledAt: true,
-          startedAt: true,
-          servedAt: true,
-        },
-      }),
     ]);
 
-  let averageWaitTimeMinutes: number | null = null;
-  let averageServeTimeMinutes: number | null = null;
-
-  if (servedEntries.length > 0) {
-    const waitTimes = servedEntries
-      .filter((e) => e.calledAt !== null && e.checkedInAt !== null)
-      .map(
-        (e) => (e.calledAt!.getTime() - e.checkedInAt!.getTime()) / 1000 / 60
-      )
-      .filter((t) => t >= 0);
-
-    const serveTimes = servedEntries
-      .filter((e) => e.servedAt !== null && e.startedAt !== null)
-      .map((e) => (e.servedAt!.getTime() - e.startedAt!.getTime()) / 1000 / 60)
-      .filter((t) => t >= 0);
-
-    if (waitTimes.length > 0) {
-      averageWaitTimeMinutes = parseFloat(
-        (waitTimes.reduce((a, b) => a + b, 0) / waitTimes.length).toFixed(1)
-      );
-    }
-
-    if (serveTimes.length > 0) {
-      averageServeTimeMinutes = parseFloat(
-        (serveTimes.reduce((a, b) => a + b, 0) / serveTimes.length).toFixed(1)
-      );
-    }
-  }
+  const { averageWaitTimeMinutes, averageServeTimeMinutes } =
+    await computeQueueTimeMetrics(clinicId, queueDate, queueDate, doctorId);
 
   return {
     date: queueDate.toISOString().split("T")[0],

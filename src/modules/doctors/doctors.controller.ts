@@ -4,7 +4,8 @@ import type { Request, Response } from "express";
 import * as DoctorsService from "./doctors.service";
 import { ApiResponse } from "../../shared/utils/apiResponse";
 import asyncHandler from "../../shared/utils/asyncHandler";
-import { AppError, HttpStatus } from "../../shared/errors/AppError";
+import { AppError, ForbiddenError, HttpStatus } from "../../shared/errors/AppError";
+import { getLockedDoctorId } from "./doctor-scope";
 import {
   updateDoctorSchema,
   doctorIdSchema,
@@ -24,6 +25,15 @@ export const updateDoctor = asyncHandler(
   async (req: Request, res: Response) => {
     const { id } = doctorIdSchema.parse(req.params);
     const input = updateDoctorSchema.parse(req.body);
+
+    // A DOCTOR login may only edit their OWN profile. getLockedDoctorId
+    // returns undefined for any other role (e.g. a platform admin acting via
+    // a different route), in which case this check does not apply here.
+    const lockedDoctorId = await getLockedDoctorId(req);
+    if (lockedDoctorId && lockedDoctorId !== id) {
+      throw new ForbiddenError("You can only update your own doctor profile");
+    }
+
     const doctor = await DoctorsService.updateDoctor(
       id,
       clinicIdOf(req),

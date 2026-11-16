@@ -6,6 +6,10 @@ import {
   endOfMonthDateStr,
   getClinicTodayStr,
 } from "../../shared/utils/clinicTime";
+import {
+  computeQueueTimeMetrics,
+  selectNextWaiting,
+} from "../queue/queue.service";
 import type {
   OverviewStats,
   TodayStats,
@@ -68,53 +72,6 @@ function patientScopeFor(clinicId: string, doctorId?: string) {
           ],
         }
       : {}),
-  };
-}
-
-function calculateAverage(values: number[]): number | null {
-  if (values.length === 0) return null;
-  return parseFloat(
-    (values.reduce((a, b) => a + b, 0) / values.length).toFixed(1)
-  );
-}
-
-async function computeQueueTimeMetrics(
-  clinicId: string,
-  start: Date,
-  end: Date,
-  doctorId?: string
-): Promise<{
-  averageWaitTimeMinutes: number | null;
-  averageServeTimeMinutes: number | null;
-}> {
-  const scope = doctorScope(clinicId, doctorId);
-
-  const servedEntries = await prisma.queueEntry.findMany({
-    where: {
-      ...scope,
-      queueDate: { gte: start, lte: end },
-      status: "SERVED",
-      calledAt: { not: null },
-      servedAt: { not: null },
-    },
-    select: {
-      createdAt: true,
-      calledAt: true,
-      servedAt: true,
-    },
-  });
-
-  const waitTimes = servedEntries
-    .filter((e) => e.calledAt !== null)
-    .map((e) => (e.calledAt!.getTime() - e.createdAt.getTime()) / 60000);
-
-  const serveTimes = servedEntries
-    .filter((e) => e.calledAt !== null && e.servedAt !== null)
-    .map((e) => (e.servedAt!.getTime() - e.calledAt!.getTime()) / 60000);
-
-  return {
-    averageWaitTimeMinutes: calculateAverage(waitTimes),
-    averageServeTimeMinutes: calculateAverage(serveTimes),
   };
 }
 
@@ -360,6 +317,15 @@ export async function getQueueDashboard(
   const { page = 1, limit = 20 } = input;
   const skip = (page - 1) * limit;
 
+  // The priority algorithm (late-patient handling) is defined per doctor, so
+  // "who is actually next" only has one answer when a single doctor is in
+  // scope. Reuse the exact same selector callNext() uses, instead of a plain
+  // queueNumber sort, so this card never disagrees with what call-next does.
+  const exactQueueDate = new Date(`${dateStr}T00:00:00.000Z`);
+  const nextWaitingId = doctorId
+    ? await selectNextWaiting(prisma, clinicId, doctorId, exactQueueDate)
+    : null;
+
   const queueEntrySelect = {
     id: true,
     queueNumber: true,
@@ -382,7 +348,6 @@ export async function getQueueDashboard(
 
   const [
     currentlyServing,
-    nextWaiting,
     waitingList,
     total,
     waiting,
@@ -398,15 +363,6 @@ export async function getQueueDashboard(
       },
       select: queueEntrySelect,
       orderBy: { calledAt: "desc" },
-    }),
-    prisma.queueEntry.findFirst({
-      where: {
-        ...scope,
-        queueDate: { gte: start, lte: end },
-        status: "WAITING",
-      },
-      select: queueEntrySelect,
-      orderBy: { queueNumber: "asc" },
     }),
     prisma.queueEntry.findMany({
       where: {
@@ -451,6 +407,17 @@ export async function getQueueDashboard(
       },
     }),
   ]);
+
+  // Optional, so run separately rather than forcing it into the transaction
+  // above: it is null whenever doctorId is unset (see comment above), and
+  // when set, the id it names is guaranteed to be a valid WAITING entry
+  // already scoped to this clinic/doctor/date.
+  const nextWaiting = nextWaitingId
+    ? await prisma.queueEntry.findFirst({
+        where: { ...scope, queueDate: { gte: start, lte: end }, id: nextWaitingId },
+        select: queueEntrySelect,
+      })
+    : null;
 
   const { averageWaitTimeMinutes, averageServeTimeMinutes } =
     await computeQueueTimeMetrics(clinicId, start, end, doctorId);
