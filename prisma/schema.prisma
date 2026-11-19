@@ -88,6 +88,10 @@ model User {
   fullName     String
   role         Role      @default(RECEPTIONIST)
   isActive     Boolean   @default(true)
+  // Clinic administrator: the only DOCTOR accounts that may change clinic
+  // settings and manage staff accounts. Plain doctors only run their own
+  // consultations and profile.
+  isClinicAdmin Boolean  @default(false)
   // Bumped on logout-all, password change and deactivation: every access token
   // issued before the bump (it carries the old value) is rejected immediately.
   tokenVersion Int       @default(0)
@@ -295,6 +299,9 @@ model QueueEntry {
   calledAt    DateTime?
   startedAt   DateTime?
   servedAt    DateTime?
+  // Set when the patient is skipped; a skipped entry goes behind everyone who
+  // has not been skipped. Cleared when the entry is called again.
+  skippedAt   DateTime?
   createdAt   DateTime    @default(now())
   updatedAt   DateTime    @updatedAt
 

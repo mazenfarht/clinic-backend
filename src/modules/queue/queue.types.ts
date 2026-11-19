@@ -24,6 +24,7 @@ export interface QueueEntrySummary {
   calledAt: Date | null;
   startedAt: Date | null;
   servedAt: Date | null;
+  skippedAt: Date | null;
   createdAt: Date;
   updatedAt: Date;
   doctor: {

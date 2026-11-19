@@ -20,6 +20,9 @@ router.post("/call-next", QueueController.callNext);
 router.post("/reset", QueueController.resetQueue);
 
 router.get("/:id", QueueController.getQueueEntryById);
+// The patient who holds a reserved slot has arrived: turn the slot into a real
+// queue entry. Until then the slot can never be called.
+router.post("/:id/check-in", QueueController.checkInReserved);
 router.patch("/:id/start", QueueController.startConsultation);
 router.patch("/:id/serve", QueueController.markServed);
 router.patch("/:id/skip", QueueController.skipPatient);

@@ -158,6 +158,7 @@ const userPublicSelect = {
   fullName: true,
   role: true,
   isActive: true,
+  isClinicAdmin: true,
   lastLogin: true,
   createdAt: true,
   updatedAt: true,

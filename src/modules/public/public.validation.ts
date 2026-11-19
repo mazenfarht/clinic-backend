@@ -2,6 +2,7 @@
 
 import { z } from "zod";
 import { Gender } from "@prisma/client";
+import { isValidCalendarDate } from "../../shared/utils/calendarDate";
 
 export const clinicIdParamSchema = z.object({
   clinicId: z.string().uuid("Invalid clinic ID format"),
@@ -13,7 +14,7 @@ export const availabilityQuerySchema = z.object({
     .string()
     .trim()
     .regex(/^\d{4}-\d{2}-\d{2}$/, "Date must be in YYYY-MM-DD format")
-    .refine((val) => !isNaN(new Date(val).getTime()), {
+    .refine(isValidCalendarDate, {
       message: "Invalid date",
     }),
 });
@@ -46,7 +47,7 @@ export const publicRegisterPatientSchema = z.object({
     .trim()
     .min(1, "Date of birth is required")
     .regex(/^\d{4}-\d{2}-\d{2}$/, "Date of birth must be in YYYY-MM-DD format")
-    .refine((val) => !isNaN(new Date(val).getTime()), {
+    .refine(isValidCalendarDate, {
       message: "Invalid date of birth",
     })
     .refine((val) => new Date(val) < new Date(), {
@@ -68,7 +69,7 @@ export const publicBookAppointmentSchema = z.object({
     .string()
     .trim()
     .regex(/^\d{4}-\d{2}-\d{2}$/, "Date must be in YYYY-MM-DD format")
-    .refine((val) => !isNaN(new Date(val).getTime()), {
+    .refine(isValidCalendarDate, {
       message: "Invalid appointment date",
     }),
 

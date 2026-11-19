@@ -111,6 +111,8 @@ async function main() {
         email: d.email,
         fullName: d.fullName,
         role: "DOCTOR",
+        // The first demo doctor administers the demo clinic.
+        isClinicAdmin: d === doctors[0],
         passwordHash,
       },
     });

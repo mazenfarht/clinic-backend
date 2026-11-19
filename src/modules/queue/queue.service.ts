@@ -8,6 +8,7 @@ import {
 } from "../../shared/errors/AppError";
 import { ApiResponse } from "../../shared/utils/apiResponse";
 import { maskName } from "../../shared/utils/maskName";
+import { parseCalendarDate } from "../../shared/utils/calendarDate";
 import { getClinicToday, getClinicTimeOfDayMs } from "../../shared/utils/clinicTime";
 import { QUEUE_STATUS_TRANSITIONS } from "./queue.types";
 import type {
@@ -20,7 +21,11 @@ import type {
   WaitingBoard,
   WaitingBoardEntry,
 } from "./queue.types";
-import type { CheckInInput, ReserveSlotInput } from "./queue.validation";
+import type {
+  CheckInInput,
+  CheckInReservedInput,
+  ReserveSlotInput,
+} from "./queue.validation";
 import type { QueueStatus, Prisma } from "@prisma/client";
 
 // ---------------------------------------------------------------------------
@@ -41,6 +46,7 @@ const queueEntrySummarySelect = {
   calledAt: true,
   startedAt: true,
   servedAt: true,
+  skippedAt: true,
   createdAt: true,
   updatedAt: true,
   doctor: {
@@ -91,9 +97,10 @@ function getTodayDate(): Date {
 function parseDateFilter(date?: string): Date {
   if (!date) return getTodayDate();
 
-  const parsed = new Date(`${date}T00:00:00.000Z`);
+  // Rejects impossible dates such as 2026-02-31 instead of rolling them over.
+  const parsed = parseCalendarDate(date);
 
-  if (isNaN(parsed.getTime())) {
+  if (!parsed) {
     throw new BadRequestError("Invalid date format");
   }
 
@@ -122,6 +129,8 @@ async function findEntryOrThrow(
   visitId: string | null;
   doctorId: string | null;
   startedAt: Date | null;
+  isReserved: boolean;
+  checkedInAt: Date | null;
 }> {
   const entry = await prisma.queueEntry.findFirst({
     where: { id, clinicId },
@@ -131,6 +140,8 @@ async function findEntryOrThrow(
       visitId: true,
       doctorId: true,
       startedAt: true,
+      isReserved: true,
+      checkedInAt: true,
     },
   });
 
@@ -265,6 +276,10 @@ function getAppointmentTimeOfDay(date: Date): number {
   );
 }
 
+// A skipped patient is put on hold until this many OTHER patients have been
+// examined (served) after the skip; then they rejoin the queue.
+const SKIP_RETURN_AFTER_PATIENTS = 3;
+
 type QueuePriorityEntry = {
   id: string;
   queueNumber: number;
@@ -313,6 +328,28 @@ type QueueCandidate = QueuePriorityEntry & {
  *
  * 8. calledAt / startedAt / servedAt are intentionally NOT used.
  *
+ * 9. A reserved slot (isReserved) is NEVER selected until its patient has
+ *    actually arrived, i.e. until reception checked them in
+ *    (POST /queue/:id/check-in sets checkedInAt and attaches the visit).
+ *    Before that there is nobody to call. After check-in a reserved patient
+ *    is an ordinary WAITING entry that keeps its reserved queue number.
+ *
+ * 10. Among entries WITHOUT an appointment the order is:
+ *      a) checked-in reserved patients, by their reserved queueNumber (1-3)
+ *      b) walk-ins, in arrival order (checkedInAt), queueNumber as tie-breaker
+ *    Scheduled patients (rules 1-7) always come before both.
+ *
+ * 11. A skipped patient (skippedAt set) is ON HOLD until
+ *    SKIP_RETURN_AFTER_PATIENTS (3) OTHER patients of this doctor have been
+ *    served after the skip. While on hold they sort behind every patient who
+ *    is not on hold. When the hold ends they simply rejoin the queue at their
+ *    natural position, so A -> B -> C -> D -> E with A skipped is served
+ *    B, C, D, A, E and everyone else keeps their relative order. A second skip
+ *    stamps a new skippedAt and starts a new hold. If nobody else is waiting,
+ *    a held patient is still the only candidate and is called at once.
+ *    Several held patients are ordered by when they were skipped.
+ *    skippedAt is cleared when the entry is called / recalled.
+ *
  * Exported so every screen that needs to know "who's actually next"
  * (call-next itself, the live queue status, the public waiting board, and
  * the reception dashboard) asks this same function instead of re-deriving
@@ -336,11 +373,15 @@ export async function selectNextWaiting(
       doctorId,
       queueDate,
       status: "WAITING",
+      // Rule 9: a reserved slot nobody has checked in yet is never "next".
+      OR: [{ isReserved: false }, { checkedInAt: { not: null } }],
     },
     select: {
       id: true,
       queueNumber: true,
       checkedInAt: true,
+      skippedAt: true,
+      isReserved: true,
       visit: {
         select: {
           appointment: {
@@ -398,6 +439,55 @@ export async function selectNextWaiting(
     },
   });
 
+  const reservedById = new Map<string, boolean>(
+    waitingEntries.map((entry) => [entry.id, entry.isReserved])
+  );
+
+  // Rule 11: which skipped patients are still on hold? A hold ends once
+  // SKIP_RETURN_AFTER_PATIENTS other patients were served after the skip.
+  const skippedAtById = new Map<string, Date | null>();
+  const skippedTimes = waitingEntries
+    .map((entry) => entry.skippedAt)
+    .filter((value): value is Date => value !== null);
+
+  let servedAfterSkip: Date[] = [];
+  if (skippedTimes.length > 0) {
+    const earliestSkip = new Date(
+      Math.min(...skippedTimes.map((value) => value.getTime()))
+    );
+
+    const served = await client.queueEntry.findMany({
+      where: {
+        clinicId,
+        doctorId,
+        queueDate,
+        status: "SERVED",
+        servedAt: { gt: earliestSkip },
+      },
+      select: { servedAt: true },
+    });
+
+    servedAfterSkip = served
+      .map((entry) => entry.servedAt)
+      .filter((value): value is Date => value !== null);
+  }
+
+  const onHoldById = new Map<string, boolean>();
+  for (const entry of waitingEntries) {
+    skippedAtById.set(entry.id, entry.skippedAt);
+
+    const skippedAt = entry.skippedAt;
+    const servedSince = skippedAt
+      ? servedAfterSkip.filter((value) => value.getTime() > skippedAt.getTime())
+          .length
+      : 0;
+
+    onHoldById.set(
+      entry.id,
+      skippedAt !== null && servedSince < SKIP_RETURN_AFTER_PATIENTS
+    );
+  }
+
   // -------------------------------------------------------------------------
   // Normalize appointment data.
   // -------------------------------------------------------------------------
@@ -422,10 +512,10 @@ export async function selectNextWaiting(
     const appointmentTime = entry.visit?.appointment?.appointmentTime ?? null;
 
     // -----------------------------------------------------------------------
-    // Safety fallback for data that has no appointment.
+    // Walk-in (checked in without an appointment).
     //
-    // The requested queue rule is appointment-based.
-    // If malformed / unexpected data has no appointment, put it last.
+    // The queue rule is appointment-based, so walk-ins go after every
+    // scheduled patient; the sort above orders them by arrival.
     // -----------------------------------------------------------------------
 
     if (!appointmentTime) {
@@ -590,8 +680,44 @@ export async function selectNextWaiting(
   // -------------------------------------------------------------------------
 
   candidates.sort((a, b) => {
+    // Rule 11: a patient on hold goes behind everyone who is not on hold.
+    const aHold = onHoldById.get(a.id) ?? false;
+    const bHold = onHoldById.get(b.id) ?? false;
+
+    if (aHold !== bHold) {
+      return aHold ? 1 : -1;
+    }
+
+    if (aHold && bHold) {
+      const aSkipped = skippedAtById.get(a.id)!;
+      const bSkipped = skippedAtById.get(b.id)!;
+      if (aSkipped.getTime() !== bSkipped.getTime()) {
+        return aSkipped.getTime() - bSkipped.getTime();
+      }
+    }
+
     if (a.effectiveTime !== b.effectiveTime) {
       return a.effectiveTime - b.effectiveTime;
+    }
+
+    // Rule 10: without an appointment, checked-in reserved patients come
+    // first (by reserved number), then walk-ins in arrival order.
+    if (a.appointmentTime === null && b.appointmentTime === null) {
+      const aReserved = reservedById.get(a.id) ?? false;
+      const bReserved = reservedById.get(b.id) ?? false;
+
+      if (aReserved !== bReserved) {
+        return aReserved ? -1 : 1;
+      }
+
+      if (
+        !aReserved &&
+        a.checkedInAt &&
+        b.checkedInAt &&
+        a.checkedInAt.getTime() !== b.checkedInAt.getTime()
+      ) {
+        return a.checkedInAt.getTime() - b.checkedInAt.getTime();
+      }
     }
 
     return a.queueNumber - b.queueNumber;
@@ -759,7 +885,8 @@ export async function checkIn(
 }
 
 // ---------------------------------------------------------------------------
-// Reserve slot — checkedInAt intentionally NOT set
+// Reserve slot — holds a queue number (1-3). checkedInAt intentionally NOT set:
+// nobody can be called for it until checkInReserved() runs.
 // ---------------------------------------------------------------------------
 
 export async function reserveSlot(
@@ -803,6 +930,139 @@ export async function reserveSlot(
   });
 
   return entry as QueueEntrySummary;
+}
+
+// ---------------------------------------------------------------------------
+// Check in the patient who holds a reserved slot
+//
+// The reserved slot becomes a real queue entry: the visit is created, the
+// patient is attached and checkedInAt is stamped. It keeps its reserved queue
+// number, which is what orders it among patients without an appointment
+// (see selectNextWaiting rule 10). Until this runs the slot cannot be called.
+// ---------------------------------------------------------------------------
+
+export async function checkInReserved(
+  id: string,
+  clinicId: string,
+  updatedById: string,
+  input: CheckInReservedInput
+): Promise<QueueEntrySummary> {
+  const queueDate = getTodayDate();
+  const existing = await findEntryOrThrow(id, clinicId);
+
+  if (!existing.isReserved) {
+    throw new BadRequestError(
+      "This entry is not a reserved slot. Use POST /queue/check-in for a regular patient."
+    );
+  }
+
+  if (existing.status !== "WAITING") {
+    throw new BadRequestError("Only a waiting reserved slot can be checked in");
+  }
+
+  if (existing.checkedInAt || existing.visitId) {
+    throw new ConflictError("This reserved slot already has a checked-in patient");
+  }
+
+  const slot = await prisma.queueEntry.findFirst({
+    where: { id, clinicId },
+    select: { queueDate: true, doctorId: true },
+  });
+
+  if (!slot || !slot.doctorId) {
+    throw new BadRequestError("Reserved slot has no doctor assigned");
+  }
+
+  if (slot.queueDate.getTime() !== queueDate.getTime()) {
+    throw new BadRequestError("This reserved slot is not for today");
+  }
+
+  const queueDoctorId = slot.doctorId;
+  await assertDoctorActive(queueDoctorId, clinicId);
+
+  const patient = await prisma.patient.findFirst({
+    where: { id: input.patientId, clinicId, deletedAt: null },
+    select: { id: true },
+  });
+
+  if (!patient) {
+    throw new NotFoundError("Patient not found or has been deleted");
+  }
+
+  try {
+    const entry = await prisma.$transaction(async (tx) => {
+      const existingEntry = await tx.queueEntry.findFirst({
+        where: {
+          clinicId,
+          queueDate,
+          status: { in: ["WAITING", "IN_PROGRESS"] },
+          visit: { patientId: input.patientId },
+        },
+        select: { id: true },
+      });
+
+      if (existingEntry) {
+        throw new ConflictError(
+          "Patient already has an active queue entry for today"
+        );
+      }
+
+      const visit = await tx.visit.create({
+        data: {
+          clinicId,
+          patientId: input.patientId,
+          doctorId: queueDoctorId,
+          createdById: updatedById,
+          updatedById,
+          visitDate: queueDate,
+          chiefComplaint: input.chiefComplaint ?? null,
+          notes: input.notes ?? null,
+        },
+        select: { id: true },
+      });
+
+      // Only one request can claim the slot; a concurrent check-in gets count 0.
+      const claimed = await tx.queueEntry.updateMany({
+        where: {
+          id,
+          clinicId,
+          status: "WAITING",
+          checkedInAt: null,
+          visitId: null,
+        },
+        data: {
+          visitId: visit.id,
+          checkedInAt: new Date(),
+          updatedById,
+        },
+      });
+
+      if (claimed.count === 0) {
+        throw new ConflictError(
+          "This reserved slot was just checked in by someone else"
+        );
+      }
+
+      return tx.queueEntry.findUniqueOrThrow({
+        where: { id },
+        select: queueEntrySummarySelect,
+      });
+    });
+
+    return entry as QueueEntrySummary;
+  } catch (err: unknown) {
+    if (
+      err instanceof Error &&
+      "code" in err &&
+      (err as { code: string }).code === "P2002"
+    ) {
+      throw new ConflictError(
+        "Could not check the patient in (duplicate entry or queue changed). Please retry."
+      );
+    }
+
+    throw err;
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -920,6 +1180,7 @@ export async function callNext(
       data: {
         status: "IN_PROGRESS",
         calledAt: new Date(),
+        skippedAt: null,
         updatedById,
       },
     });
@@ -1040,7 +1301,10 @@ export async function markServed(
 }
 
 // ---------------------------------------------------------------------------
-// Skip patient — resets calledAt AND startedAt, preserves checkedInAt
+// Skip patient — back to WAITING, on hold until 3 other patients are served.
+// Resets calledAt AND startedAt (on the entry and its visit), preserves
+// checkedInAt, and stamps skippedAt so selectNextWaiting() holds the patient
+// back for SKIP_RETURN_AFTER_PATIENTS other patients (rule 11).
 // ---------------------------------------------------------------------------
 
 export async function skipPatient(
@@ -1052,15 +1316,27 @@ export async function skipPatient(
 
   assertStatusTransition(existing.status, "WAITING");
 
-  const entry = await prisma.queueEntry.update({
-    where: { id },
-    data: {
-      status: "WAITING",
-      calledAt: null,
-      startedAt: null,
-      updatedById,
-    },
-    select: queueEntrySummarySelect,
+  const entry = await prisma.$transaction(async (tx) => {
+    const updated = await tx.queueEntry.update({
+      where: { id },
+      data: {
+        status: "WAITING",
+        calledAt: null,
+        startedAt: null,
+        skippedAt: new Date(),
+        updatedById,
+      },
+      select: queueEntrySummarySelect,
+    });
+
+    if (existing.visitId) {
+      await tx.visit.update({
+        where: { id: existing.visitId },
+        data: { startedAt: null },
+      });
+    }
+
+    return updated;
   });
 
   return entry as QueueEntrySummary;
@@ -1079,6 +1355,13 @@ export async function recallPatient(
 
   if (existing.status !== "WAITING") {
     throw new BadRequestError("Only waiting patients can be recalled");
+  }
+
+  // A reserved slot is only a held number until its patient arrives.
+  if (existing.isReserved && !existing.checkedInAt) {
+    throw new BadRequestError(
+      "This reserved slot has no checked-in patient yet. Check the patient in first."
+    );
   }
 
   const inProgress = await prisma.queueEntry.findFirst({
@@ -1105,6 +1388,7 @@ export async function recallPatient(
     data: {
       status: "IN_PROGRESS",
       calledAt: new Date(),
+      skippedAt: null,
       updatedById,
     },
     select: queueEntrySummarySelect,

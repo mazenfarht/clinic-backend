@@ -4,12 +4,17 @@ import { Router } from "express";
 import * as VisitController from "./visit.controller";
 import { authMiddleware } from "../auth/auth.middleware";
 import { requireRoles } from "../auth/role.middleware";
+import { redactClinicalDataForReception } from "../../middleware/redactClinicalData.middleware";
 
 const router = Router();
 const patientRouter = Router({ mergeParams: true });
 
 router.use(authMiddleware);
 patientRouter.use(authMiddleware);
+// Reception sees visit dates / complaints, never diagnosis, treatment or
+// prescription.
+router.use(redactClinicalDataForReception);
+patientRouter.use(redactClinicalDataForReception);
 
 // ---------------------------------------------------------------------------
 // Collection routes — all authenticated users can view

@@ -1,12 +1,13 @@
 // src/modules/dashboard/dashboard.validation.ts
 
 import { z } from "zod";
+import { isValidCalendarDate } from "../../shared/utils/calendarDate";
 
 const dateSchema = z
   .string()
   .trim()
   .regex(/^\d{4}-\d{2}-\d{2}$/, "Date must be in YYYY-MM-DD format")
-  .refine((val) => !isNaN(new Date(val).getTime()), "Invalid date");
+  .refine(isValidCalendarDate, "Invalid date");
 
 // Optional doctor filter. DOCTOR logins are always forced to their own id by the
 // controller; reception may pass any doctor, or omit it for clinic-wide numbers.

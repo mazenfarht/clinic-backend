@@ -8,6 +8,7 @@ import {
   createReceptionistSchema,
   userIdSchema,
   updateUserStatusSchema,
+  updateUserAdminSchema,
 } from "./users.validation";
 import { AppError, HttpStatus } from "../../shared/errors/AppError";
 
@@ -69,6 +70,36 @@ export const setUserStatus = asyncHandler(
       res,
       user,
       isActive ? "User activated successfully" : "User deactivated successfully"
+    );
+  }
+);
+
+// ---------------------------------------------------------------------------
+// PATCH /users/:id/admin
+// ---------------------------------------------------------------------------
+
+export const setUserAdmin = asyncHandler(
+  async (req: Request, res: Response) => {
+    if (!req.user) {
+      throw new AppError("Unauthenticated", HttpStatus.UNAUTHORIZED);
+    }
+
+    const { id } = userIdSchema.parse(req.params);
+    const { isClinicAdmin } = updateUserAdminSchema.parse(req.body);
+
+    const user = await UsersService.setClinicAdmin(
+      req.user.clinicId,
+      req.user.sub,
+      id,
+      isClinicAdmin
+    );
+
+    ApiResponse.ok(
+      res,
+      user,
+      isClinicAdmin
+        ? "Clinic administrator role granted successfully"
+        : "Clinic administrator role revoked successfully"
     );
   }
 );

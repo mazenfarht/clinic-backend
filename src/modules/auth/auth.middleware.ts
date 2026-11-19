@@ -58,6 +58,7 @@ export async function authMiddleware(
         clinicId: true,
         role: true,
         isActive: true,
+        isClinicAdmin: true,
         tokenVersion: true,
         clinic: { select: { isActive: true } },
       },
@@ -75,7 +76,12 @@ export async function authMiddleware(
       throw new UnauthorizedError("Access token has been revoked");
     }
 
-    req.user = { ...payload, clinicId: user.clinicId, role: user.role };
+    req.user = {
+      ...payload,
+      clinicId: user.clinicId,
+      role: user.role,
+      isClinicAdmin: user.isClinicAdmin,
+    };
 
     next();
   } catch (err) {

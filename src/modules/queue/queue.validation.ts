@@ -2,6 +2,7 @@
 
 import { z } from "zod";
 import { QueueStatus } from "@prisma/client";
+import { isValidCalendarDate } from "../../shared/utils/calendarDate";
 
 const doctorIdField = z.string().uuid("Invalid doctor ID format");
 
@@ -11,6 +12,22 @@ export const checkInSchema = z.object({
   // doctor, and ignored for DOCTOR logins (they always use their own queue).
   doctorId: doctorIdField.optional(),
   appointmentId: z.string().uuid("Invalid appointment ID format").optional(),
+  chiefComplaint: z
+    .string()
+    .trim()
+    .max(500, "Chief complaint must not exceed 500 characters")
+    .optional(),
+  notes: z
+    .string()
+    .trim()
+    .max(1000, "Notes must not exceed 1000 characters")
+    .optional(),
+});
+
+// Check in the patient who arrived for a reserved slot. The queue (doctor and
+// number) comes from the slot itself, so only the patient is needed.
+export const checkInReservedSchema = z.object({
+  patientId: z.string().uuid("Invalid patient ID format"),
   chiefComplaint: z
     .string()
     .trim()
@@ -49,6 +66,7 @@ export const queueQuerySchema = z.object({
     .string()
     .trim()
     .regex(/^\d{4}-\d{2}-\d{2}$/, "Date must be in YYYY-MM-DD format")
+    .refine(isValidCalendarDate, "Invalid date")
     .optional(),
   page: z
     .string()
@@ -83,6 +101,7 @@ export const queueStatisticsQuerySchema = z.object({
     .string()
     .trim()
     .regex(/^\d{4}-\d{2}-\d{2}$/, "Date must be in YYYY-MM-DD format")
+    .refine(isValidCalendarDate, "Invalid date")
     .optional(),
 });
 
@@ -96,5 +115,6 @@ export const recallSchema = z.object({
 
 export type CheckInInput = z.infer<typeof checkInSchema>;
 export type ReserveSlotInput = z.infer<typeof reserveSlotSchema>;
+export type CheckInReservedInput = z.infer<typeof checkInReservedSchema>;
 export type QueueQueryInput = z.infer<typeof queueQuerySchema>;
 export type RecallInput = z.infer<typeof recallSchema>;

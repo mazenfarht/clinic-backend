@@ -28,3 +28,50 @@ describe("requireRoles middleware", () => {
     expect(next).toHaveBeenCalledWith();
   });
 });
+
+describe("requireClinicAdmin middleware", () => {
+  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  const { requireClinicAdmin } = require("../../../src/modules/auth/role.middleware");
+
+  it("rejects when req.user is missing", () => {
+    const next = jest.fn();
+    requireClinicAdmin({} as any, {} as any, next);
+    expect(next).toHaveBeenCalledWith(expect.any(UnauthorizedError));
+  });
+
+  it("rejects a plain doctor", () => {
+    const next = jest.fn();
+    requireClinicAdmin(
+      { user: { role: "DOCTOR", isClinicAdmin: false } } as any,
+      {} as any,
+      next
+    );
+    expect(next).toHaveBeenCalledWith(expect.any(ForbiddenError));
+  });
+
+  it("rejects a doctor whose flag is missing", () => {
+    const next = jest.fn();
+    requireClinicAdmin({ user: { role: "DOCTOR" } } as any, {} as any, next);
+    expect(next).toHaveBeenCalledWith(expect.any(ForbiddenError));
+  });
+
+  it("rejects a receptionist even if the flag were somehow set", () => {
+    const next = jest.fn();
+    requireClinicAdmin(
+      { user: { role: "RECEPTIONIST", isClinicAdmin: true } } as any,
+      {} as any,
+      next
+    );
+    expect(next).toHaveBeenCalledWith(expect.any(ForbiddenError));
+  });
+
+  it("allows a clinic administrator", () => {
+    const next = jest.fn();
+    requireClinicAdmin(
+      { user: { role: "DOCTOR", isClinicAdmin: true } } as any,
+      {} as any,
+      next
+    );
+    expect(next).toHaveBeenCalledWith();
+  });
+});

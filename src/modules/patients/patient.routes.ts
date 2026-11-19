@@ -4,10 +4,12 @@ import { Router } from "express";
 import * as PatientController from "./patient.controller";
 import { authMiddleware } from "../auth/auth.middleware";
 import { requireRoles } from "../auth/role.middleware";
+import { redactClinicalDataForReception } from "../../middleware/redactClinicalData.middleware";
 
 const router = Router();
 
 router.use(authMiddleware);
+router.use(redactClinicalDataForReception);
 router.use(requireRoles("DOCTOR", "RECEPTIONIST"));
 
 // ---------------------------------------------------------------------------

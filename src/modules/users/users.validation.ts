@@ -29,4 +29,10 @@ export const updateUserStatusSchema = z.object({
   isActive: z.boolean(),
 });
 
+export const updateUserAdminSchema = z.object({
+  isClinicAdmin: z.boolean(),
+});
+
+export type UpdateUserAdminInput = z.infer<typeof updateUserAdminSchema>;
+
 export type UpdateUserStatusInput = z.infer<typeof updateUserStatusSchema>;

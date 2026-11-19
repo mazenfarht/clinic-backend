@@ -11,6 +11,12 @@ export interface JwtAccessPayload {
   type: "access";
 }
 
+// What authMiddleware attaches to req.user: the verified token claims plus the
+// CURRENT role / clinic / admin flag read from the database.
+export interface RequestUser extends JwtAccessPayload {
+  isClinicAdmin?: boolean;
+}
+
 export interface JwtRefreshPayload {
   sub: string;
   clinicId: string;
@@ -37,6 +43,7 @@ export interface AuthenticatedUser {
   fullName: string;
   role: Role;
   isActive: boolean;
+  isClinicAdmin: boolean;
   lastLogin: Date | null;
   createdAt: Date;
   updatedAt: Date;
@@ -50,7 +57,7 @@ export interface LoginResult {
 declare global {
   namespace Express {
     interface Request {
-      user?: JwtAccessPayload;
+      user?: RequestUser;
     }
   }
 }

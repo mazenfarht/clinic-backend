@@ -49,6 +49,7 @@ export async function createUser(
     fullName: string;
     password: string;
     isActive: boolean;
+    isClinicAdmin: boolean;
   }> = {}
 ): Promise<TestUser> {
   const plainPassword = overrides.password ?? DEFAULT_PASSWORD;
@@ -65,6 +66,7 @@ export async function createUser(
       role,
       passwordHash,
       isActive: overrides.isActive ?? true,
+      isClinicAdmin: overrides.isClinicAdmin ?? false,
     },
   });
 

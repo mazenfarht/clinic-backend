@@ -2,6 +2,7 @@
 
 import { z } from "zod";
 import { getClinicTodayStr } from "../../shared/utils/clinicTime";
+import { isValidCalendarDate } from "../../shared/utils/calendarDate";
 
 export const createVisitSchema = z.object({
   patientId: z.string().uuid("Invalid patient ID format"),
@@ -11,7 +12,7 @@ export const createVisitSchema = z.object({
     .string()
     .trim()
     .regex(/^\d{4}-\d{2}-\d{2}$/, "Visit date must be in YYYY-MM-DD format")
-    .refine((val) => !isNaN(new Date(val).getTime()), "Invalid visit date")
+    .refine(isValidCalendarDate, "Invalid visit date")
     .optional(),
   chiefComplaint: z
     .string()
@@ -89,6 +90,7 @@ export const updateVisitSchema = z
         /^\d{4}-\d{2}-\d{2}$/,
         "Follow-up date must be in YYYY-MM-DD format"
       )
+      .refine(isValidCalendarDate, "Invalid follow-up date")
       .refine(
         (val) => val > getClinicTodayStr(),
         "Follow-up date must be in the future"
@@ -113,16 +115,19 @@ export const visitQuerySchema = z.object({
     .string()
     .trim()
     .regex(/^\d{4}-\d{2}-\d{2}$/, "Date must be in YYYY-MM-DD format")
+    .refine(isValidCalendarDate, "Invalid date")
     .optional(),
   fromDate: z
     .string()
     .trim()
     .regex(/^\d{4}-\d{2}-\d{2}$/, "From date must be in YYYY-MM-DD format")
+    .refine(isValidCalendarDate, "Invalid from date")
     .optional(),
   toDate: z
     .string()
     .trim()
     .regex(/^\d{4}-\d{2}-\d{2}$/, "To date must be in YYYY-MM-DD format")
+    .refine(isValidCalendarDate, "Invalid to date")
     .optional(),
   sortBy: z.enum(["visitDate", "createdAt"]).default("visitDate"),
   sortOrder: z.enum(["asc", "desc"]).default("desc"),

@@ -21,6 +21,7 @@ describe("Clinic settings module", () => {
     clinic = await createClinic();
     doctor = await createUser(clinic.id, "DOCTOR", {
       email: "settings-doctor@example.com",
+      isClinicAdmin: true,
     });
     receptionist = await createUser(clinic.id, "RECEPTIONIST", {
       email: "settings-receptionist@example.com",
@@ -46,6 +47,14 @@ describe("Clinic settings module", () => {
       expect(res.status).toBe(403);
     });
 
+    it("lets a plain DOCTOR read the settings", async () => {
+      const plain = await createUser(clinic.id, "DOCTOR");
+      const res = await request(app)
+        .get("/api/v1/clinic-settings")
+        .set(authHeader(signAccessToken(plain as any)));
+      expect(res.status).toBe(200);
+    });
+
     it("returns default settings for a DOCTOR, auto-creating them if absent", async () => {
       const res = await request(app)
         .get("/api/v1/clinic-settings")
@@ -64,6 +73,15 @@ describe("Clinic settings module", () => {
         .set(authHeader(doctorToken))
         .send({});
       expect(res.status).toBe(400);
+    });
+
+    it("rejects a plain DOCTOR who is not a clinic administrator", async () => {
+      const plain = await createUser(clinic.id, "DOCTOR");
+      const res = await request(app)
+        .patch("/api/v1/clinic-settings")
+        .set(authHeader(signAccessToken(plain as any)))
+        .send({ maxPatientsPerDay: 75 });
+      expect(res.status).toBe(403);
     });
 
     it("rejects a RECEPTIONIST", async () => {

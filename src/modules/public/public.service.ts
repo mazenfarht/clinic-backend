@@ -5,6 +5,7 @@ import prisma from "../../config/database";
 import { getClinicNow } from "../../shared/utils/clinicTime";
 import { allocateMrn } from "../patients/mrn";
 import { maskName } from "../../shared/utils/maskName";
+import { parseCalendarDate } from "../../shared/utils/calendarDate";
 import { getWaitingBoard } from "../queue/queue.service";
 import type { WaitingBoard } from "../queue/queue.types";
 import {
@@ -64,7 +65,12 @@ function slotToMinutes(slot: string): number {
 }
 
 function parseDateOnly(date: string): Date {
-  return new Date(`${date}T00:00:00.000Z`);
+  // Rejects impossible dates such as 2026-02-31 instead of rolling them over.
+  const parsed = parseCalendarDate(date);
+  if (!parsed) {
+    throw new BadRequestError("Invalid date");
+  }
+  return parsed;
 }
 
 interface DaySchedule {

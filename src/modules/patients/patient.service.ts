@@ -50,29 +50,39 @@ const patientSummarySelect = {
   },
 } as const;
 
-const patientDetailSelect = {
-  ...patientSummarySelect,
-  visits: {
-    select: {
-      id: true,
-      visitDate: true,
-      chiefComplaint: true,
-      diagnosis: true,
-      createdAt: true,
+// A DOCTOR only sees the visits and appointments that belong to THEM. Another
+// doctor's diagnoses must not leak through the shared patient record, so the
+// embedded history is filtered by doctorId when one is passed (reception passes
+// none and sees everything, minus clinical fields stripped at the route level).
+function buildPatientDetailSelect(doctorId?: string) {
+  const ownOnly = doctorId ? { where: { doctorId } } : {};
+
+  return {
+    ...patientSummarySelect,
+    visits: {
+      ...ownOnly,
+      select: {
+        id: true,
+        visitDate: true,
+        chiefComplaint: true,
+        diagnosis: true,
+        createdAt: true,
+      },
+      orderBy: { visitDate: "desc" as const },
     },
-    orderBy: { visitDate: "desc" as const },
-  },
-  appointments: {
-    select: {
-      id: true,
-      appointmentDate: true,
-      appointmentTime: true,
-      status: true,
-      notes: true,
+    appointments: {
+      ...ownOnly,
+      select: {
+        id: true,
+        appointmentDate: true,
+        appointmentTime: true,
+        status: true,
+        notes: true,
+      },
+      orderBy: { appointmentDate: "desc" as const },
     },
-    orderBy: { appointmentDate: "desc" as const },
-  },
-} as const;
+  };
+}
 
 // ---------------------------------------------------------------------------
 // Duplicate checks
@@ -189,13 +199,14 @@ export async function createPatient(
 
 export async function getPatientById(
   id: string,
-  clinicId: string
+  clinicId: string,
+  doctorId?: string
 ): Promise<PatientDetail> {
   await findPatientOrThrow(id, clinicId);
 
   const patient = await prisma.patient.findFirst({
     where: { id, clinicId, deletedAt: null },
-    select: patientDetailSelect,
+    select: buildPatientDetailSelect(doctorId),
   });
 
   if (!patient) {

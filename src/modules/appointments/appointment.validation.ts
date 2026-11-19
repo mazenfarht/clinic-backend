@@ -3,15 +3,13 @@
 import { z } from "zod";
 import { AppointmentStatus } from "@prisma/client";
 import { getClinicTodayStr } from "../../shared/utils/clinicTime";
+import { isValidCalendarDate } from "../../shared/utils/calendarDate";
 
 const appointmentDateSchema = z
   .string()
   .trim()
   .regex(/^\d{4}-\d{2}-\d{2}$/, "Date must be in YYYY-MM-DD format")
-  .refine((val) => {
-    const date = new Date(val);
-    return !isNaN(date.getTime());
-  }, "Invalid date")
+  .refine(isValidCalendarDate, "Invalid date")
   // Compare against today's date at the clinic (Cairo). YYYY-MM-DD strings
   // sort chronologically, so a plain string comparison is exact.
   .refine(
@@ -65,16 +63,19 @@ export const appointmentQuerySchema = z.object({
     .string()
     .trim()
     .regex(/^\d{4}-\d{2}-\d{2}$/, "Date must be in YYYY-MM-DD format")
+    .refine(isValidCalendarDate, "Invalid date")
     .optional(),
   fromDate: z
     .string()
     .trim()
     .regex(/^\d{4}-\d{2}-\d{2}$/, "From date must be in YYYY-MM-DD format")
+    .refine(isValidCalendarDate, "Invalid from date")
     .optional(),
   toDate: z
     .string()
     .trim()
     .regex(/^\d{4}-\d{2}-\d{2}$/, "To date must be in YYYY-MM-DD format")
+    .refine(isValidCalendarDate, "Invalid to date")
     .optional(),
   page: z
     .string()

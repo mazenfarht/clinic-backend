@@ -115,6 +115,13 @@ describe("Public module (no authentication required)", () => {
       expect(res.status).toBe(400);
     });
 
+    it("rejects an impossible date of birth such as 31 February", async () => {
+      const res = await request(app)
+        .post(`/api/v1/public/clinics/${clinic.id}/patients/register`)
+        .send({ ...validPayload, phone: "+19995552222", dateOfBirth: "1995-02-31" });
+      expect(res.status).toBe(400);
+    });
+
     it("registers a new patient with an auto-generated MRN", async () => {
       const res = await request(app)
         .post(`/api/v1/public/clinics/${clinic.id}/patients/register`)
@@ -141,6 +148,19 @@ describe("Public module (no authentication required)", () => {
           patientId: patient.id,
           doctorId: doctor.doctorId,
           appointmentDate: "2000-01-01",
+          appointmentTime: "09:00",
+        });
+      expect(res.status).toBe(400);
+    });
+
+    it("rejects an impossible appointment date such as 31 February", async () => {
+      const patient = await createPatient(clinic.id, doctor.id);
+      const res = await request(app)
+        .post(`/api/v1/public/clinics/${clinic.id}/appointments`)
+        .send({
+          patientId: patient.id,
+          doctorId: doctor.doctorId,
+          appointmentDate: "2099-02-31",
           appointmentTime: "09:00",
         });
       expect(res.status).toBe(400);

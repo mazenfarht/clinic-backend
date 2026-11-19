@@ -1,5 +1,6 @@
 import {
   checkInSchema,
+  checkInReservedSchema,
   reserveSlotSchema,
   queueQuerySchema,
   queueEntryIdSchema,
@@ -72,5 +73,37 @@ describe("queueQuerySchema", () => {
 describe("queueEntryIdSchema", () => {
   it("rejects a non-UUID id", () => {
     expect(queueEntryIdSchema.safeParse({ id: "123" }).success).toBe(false);
+  });
+});
+
+describe("checkInReservedSchema", () => {
+  const patientId = "11111111-1111-4111-8111-111111111111";
+
+  it("accepts just a patientId", () => {
+    expect(checkInReservedSchema.safeParse({ patientId }).success).toBe(true);
+  });
+
+  it("accepts a chief complaint and notes", () => {
+    expect(
+      checkInReservedSchema.safeParse({
+        patientId,
+        chiefComplaint: "Headache",
+        notes: "Arrived with her son",
+      }).success
+    ).toBe(true);
+  });
+
+  it("rejects a missing or malformed patientId", () => {
+    expect(checkInReservedSchema.safeParse({}).success).toBe(false);
+    expect(checkInReservedSchema.safeParse({ patientId: "abc" }).success).toBe(false);
+  });
+
+  it("rejects an over-long chief complaint", () => {
+    expect(
+      checkInReservedSchema.safeParse({
+        patientId,
+        chiefComplaint: "x".repeat(501),
+      }).success
+    ).toBe(false);
   });
 });

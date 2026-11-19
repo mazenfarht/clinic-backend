@@ -5,6 +5,7 @@ import * as PatientService from "./patient.service";
 import { ApiResponse } from "../../shared/utils/apiResponse";
 import asyncHandler from "../../shared/utils/asyncHandler";
 import { AppError, HttpStatus } from "../../shared/errors/AppError";
+import { getLockedDoctorId } from "../doctors/doctor-scope";
 import {
   createPatientSchema,
   updatePatientSchema,
@@ -64,7 +65,9 @@ export const getPatientById = asyncHandler(
   async (req: Request, res: Response) => {
     const { clinicId } = resolveAuth(req);
     const { id } = patientIdSchema.parse(req.params);
-    const patient = await PatientService.getPatientById(id, clinicId);
+    // DOCTOR logins only get their own visits / appointments embedded.
+    const doctorId = await getLockedDoctorId(req);
+    const patient = await PatientService.getPatientById(id, clinicId, doctorId);
 
     ApiResponse.ok(res, patient, "Patient retrieved successfully");
   }

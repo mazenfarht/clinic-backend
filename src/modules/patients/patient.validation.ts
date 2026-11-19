@@ -2,13 +2,14 @@
 
 import { z } from "zod";
 import { Gender } from "@prisma/client";
+import { isValidCalendarDate } from "../../shared/utils/calendarDate";
 
 const dateOfBirthSchema = z
   .string()
   .trim()
   .min(1, "Date of birth is required")
   .regex(/^\d{4}-\d{2}-\d{2}$/, "Date of birth must be in YYYY-MM-DD format")
-  .refine((val) => !isNaN(new Date(val).getTime()), {
+  .refine(isValidCalendarDate, {
     message: "Invalid date of birth",
   })
   .refine((val) => new Date(val) < new Date(), {

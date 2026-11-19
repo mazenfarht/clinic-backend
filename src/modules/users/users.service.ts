@@ -24,6 +24,7 @@ const userPublicSelect = {
   fullName: true,
   role: true,
   isActive: true,
+  isClinicAdmin: true,
   lastLogin: true,
   createdAt: true,
   updatedAt: true,
@@ -117,6 +118,44 @@ export async function setUserActive(
   if (!isActive) {
     await revokeAllSessions(userId);
   }
+
+  return user as AuthenticatedUser;
+}
+
+// ---------------------------------------------------------------------------
+// Grant / revoke clinic administrator (doctors only, never on yourself)
+// ---------------------------------------------------------------------------
+
+export async function setClinicAdmin(
+  clinicId: string,
+  actingUserId: string,
+  userId: string,
+  isClinicAdmin: boolean
+): Promise<AuthenticatedUser> {
+  if (userId === actingUserId) {
+    throw new BadRequestError("You cannot change your own administrator role");
+  }
+
+  const target = await prisma.user.findFirst({
+    where: { id: userId, clinicId },
+    select: { id: true, role: true },
+  });
+
+  if (!target) {
+    throw new NotFoundError("User not found");
+  }
+
+  if (target.role !== "DOCTOR") {
+    throw new BadRequestError(
+      "Only a doctor account can be a clinic administrator"
+    );
+  }
+
+  const user = await prisma.user.update({
+    where: { id: userId },
+    data: { isClinicAdmin },
+    select: userPublicSelect,
+  });
 
   return user as AuthenticatedUser;
 }

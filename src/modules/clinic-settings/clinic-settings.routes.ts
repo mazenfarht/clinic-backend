@@ -3,7 +3,7 @@
 import { Router } from "express";
 import * as ClinicSettingsController from "./clinic-settings.controller";
 import { authMiddleware } from "../auth/auth.middleware";
-import { requireRoles } from "../auth/role.middleware";
+import { requireClinicAdmin, requireRoles } from "../auth/role.middleware";
 
 const router = Router();
 
@@ -15,6 +15,11 @@ router.use(requireRoles("DOCTOR"));
 // ---------------------------------------------------------------------------
 
 router.get("/", ClinicSettingsController.getClinicSettings);
-router.patch("/", ClinicSettingsController.updateClinicSettings);
+// Reading is open to every doctor; changing the clinic is admin-only.
+router.patch(
+  "/",
+  requireClinicAdmin,
+  ClinicSettingsController.updateClinicSettings
+);
 
 export default router;

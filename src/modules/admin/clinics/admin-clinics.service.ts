@@ -161,6 +161,8 @@ export async function createClinic(input: CreateClinicInput, adminId: string) {
         passwordHash,
         fullName: input.doctor.fullName,
         role: "DOCTOR",
+        // The doctor created together with the clinic administers it.
+        isClinicAdmin: true,
       },
       select: { id: true },
     });

@@ -7,6 +7,7 @@ import asyncHandler from "../../shared/utils/asyncHandler";
 import { AppError, HttpStatus } from "../../shared/errors/AppError";
 import {
   checkInSchema,
+  checkInReservedSchema,
   reserveSlotSchema,
   queueQuerySchema,
   queueEntryIdSchema,
@@ -51,6 +52,17 @@ export const reserveSlot = asyncHandler(async (req: Request, res: Response) => {
   );
   ApiResponse.created(res, entry, "Queue slot reserved successfully");
 });
+
+export const checkInReserved = asyncHandler(
+  async (req: Request, res: Response) => {
+    const { clinicId, userId } = resolveAuth(req);
+    const { id } = queueEntryIdSchema.parse(req.params);
+    const input = checkInReservedSchema.parse(req.body);
+    await assertQueueEntryAccess(req, id);
+    const entry = await QueueService.checkInReserved(id, clinicId, userId, input);
+    ApiResponse.ok(res, entry, "Reserved patient checked in successfully");
+  }
+);
 
 export const getQueue = asyncHandler(async (req: Request, res: Response) => {
   const { clinicId } = resolveAuth(req);
